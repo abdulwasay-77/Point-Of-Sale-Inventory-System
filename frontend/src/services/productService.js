@@ -1,4 +1,3 @@
-
 import axiosInstance from './axiosInstance'
 
 // Product CRUD API layer. Supports multipart form data for image uploads.
@@ -17,4 +16,5 @@ export const productService = {
   search: (query) => axiosInstance.get('/products/search', { params: { q: query } }),
   lookupByCode: (code) => axiosInstance.get(`/products/lookup/${encodeURIComponent(code)}`),
   getBatches: (id) => axiosInstance.get(`/products/${id}/batches`),
+  generateBarcode: (id) => axiosInstance.post(`/products/${id}/generate-barcode`),
 }

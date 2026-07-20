@@ -1,4 +1,3 @@
-
 const express = require('express');
 const ProductsController = require('./products.controller');
 const authMiddleware = require('../../middleware/authMiddleware');
@@ -30,5 +29,10 @@ router.put(
   ProductsController.update,
 );
 router.delete('/:id', permissionMiddleware(PERMISSIONS.PRODUCTS_DELETE), ProductsController.remove);
+router.post(
+  '/:id/generate-barcode',
+  permissionMiddleware(PERMISSIONS.BARCODES_MANAGE),
+  ProductsController.generateBarcode,
+);
 
 module.exports = router;

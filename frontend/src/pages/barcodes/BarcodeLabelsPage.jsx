@@ -49,7 +49,9 @@ export default function BarcodeLabelsPage() {
   )
   const totalLabels = selectedProducts.reduce((sum, p) => sum + (selected[p.id] || 0), 0)
 
-  function toggle(product) {
+  const [generatingFor, setGeneratingFor] = useState(null)
+
+  async function toggle(product) {
     setSelected((prev) => {
       const next = { ...prev }
       if (next[product.id]) {
@@ -59,6 +61,22 @@ export default function BarcodeLabelsPage() {
       }
       return next
     })
+
+    // Selecting a product that doesn't have a barcode yet generates and
+    // saves one right away — printing is never blocked on a separate trip
+    // to the product form first.
+    if (!selected[product.id] && !product.barcode) {
+      setGeneratingFor(product.id)
+      try {
+        const res = await productService.generateBarcode(product.id)
+        setProducts((prev) => prev.map((p) => (p.id === product.id ? res.data.data : p)))
+      } catch {
+        // Leave it unset — the label preview shows "No barcode assigned"
+        // and the admin can retry from the product form if this fails.
+      } finally {
+        setGeneratingFor(null)
+      }
+    }
   }
 
   function setCopies(productId, copies) {
@@ -121,18 +139,24 @@ export default function BarcodeLabelsPage() {
                       </div>
                       {isSelected && (
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <label className="text-xs text-ink-muted" htmlFor={`copies-${product.id}`}>
-                            Copies
-                          </label>
-                          <input
-                            id={`copies-${product.id}`}
-                            type="number"
-                            min="1"
-                            max="100"
-                            className="input-field figure !py-1 !px-2 w-16 text-center"
-                            value={selected[product.id]}
-                            onChange={(e) => setCopies(product.id, e.target.value)}
-                          />
+                          {generatingFor === product.id ? (
+                            <span className="text-xs text-ink-muted">Generating barcode…</span>
+                          ) : (
+                            <>
+                              <label className="text-xs text-ink-muted" htmlFor={`copies-${product.id}`}>
+                                Copies
+                              </label>
+                              <input
+                                id={`copies-${product.id}`}
+                                type="number"
+                                min="1"
+                                max="100"
+                                className="input-field figure !py-1 !px-2 w-16 text-center"
+                                value={selected[product.id]}
+                                onChange={(e) => setCopies(product.id, e.target.value)}
+                              />
+                            </>
+                          )}
                         </div>
                       )}
                     </li>

@@ -1,4 +1,3 @@
-
 const ProductsService = require('./products.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const { success, created } = require('../../utils/apiResponse');
@@ -32,6 +31,13 @@ class ProductsController {
   getBatches = asyncHandler(async (req, res) => {
     const batches = await ProductsService.getBatches(req.params.id);
     success(res, batches);
+  });
+
+  // Gated by BARCODES_MANAGE at the route level (see products.routes.js) —
+  // Admin only by default.
+  generateBarcode = asyncHandler(async (req, res) => {
+    const product = await ProductsService.generateBarcode(req.params.id);
+    success(res, product, 'Barcode generated');
   });
 
   create = asyncHandler(async (req, res) => {

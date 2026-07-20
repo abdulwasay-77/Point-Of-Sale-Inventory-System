@@ -28,6 +28,26 @@ function stripUnauthorizedPricingFields(data, actorPermissions) {
   return clean;
 }
 
+/** Generates a random 12-digit numeric code — a barcode value in its own
+ *  right, deliberately distinct from the product's SKU (some scanners/
+ *  printers behave oddly with letters, and keeping it purely numeric also
+ *  makes it visually obvious this is "the barcode", not a duplicate of
+ *  the SKU text). Checked against the database and re-rolled on the
+ *  extremely unlikely chance of a collision, so what comes back is always
+ *  actually unique before it's ever saved. */
+async function generateUniqueBarcode() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let code = '';
+    for (let i = 0; i < 12; i += 1) code += Math.floor(Math.random() * 10);
+    // eslint-disable-next-line no-await-in-loop
+    const existing = await prisma.product.findUnique({ where: { barcode: code } });
+    if (!existing) return code;
+  }
+  // Practically unreachable (12 digits = 1 trillion possibilities), but
+  // fall back to a timestamp-based code rather than looping forever.
+  return `9${Date.now()}`.slice(0, 12);
+}
+
 class ProductsService {
   async getAll({ q, categoryId } = {}) {
     const where = {
@@ -77,11 +97,11 @@ class ProductsService {
     const initialStock = Number(data.stock ?? 0);
     const costPrice = Number(data.cost_price ?? 0);
 
-    // Barcode: if the admin didn't scan/type one in, generate one from the
-    // SKU (Code128 can encode letters/numbers/dashes, so the SKU itself is
-    // a valid barcode value — no separate counter needed, and it's always
-    // immediately printable/scannable the moment the product exists).
-    const barcode = data.barcode?.trim() || data.sku?.trim() || null;
+    // Barcode is either an existing one scanned/typed in (e.g. a
+    // manufacturer's own barcode), or left null here — a distinct,
+    // auto-generated code is created on demand via generateBarcode()
+    // below, not silently derived from the SKU.
+    const barcode = data.barcode?.trim() || null;
 
     const product = await prisma.product.create({
       data: {
@@ -265,6 +285,26 @@ class ProductsService {
    * stock quantity — this is what lets staff pick a specific shade/lot at
    * sale time instead of stock being one anonymous pool.
    */
+  /**
+   * Generates and persists a distinct barcode for an existing product,
+   * overwriting whatever (if anything) is there. Used by two places: the
+   * product form's "Generate" button once a product has been saved, and
+   * the Barcode Labels page, which calls this automatically the moment a
+   * product without a barcode is selected for printing — so printing
+   * never has to be blocked on a separate trip to the product form first.
+   */
+  async generateBarcode(id) {
+    const product = await prisma.product.findUnique({ where: { id } });
+    if (!product) {
+      const err = new Error('Product not found');
+      err.status = 404;
+      throw err;
+    }
+    const barcode = await generateUniqueBarcode();
+    await prisma.product.update({ where: { id }, data: { barcode } });
+    return this.getById(id);
+  }
+
   async getBatches(productId) {
     const batches = await prisma.batch.findMany({
       where: { product_id: productId },

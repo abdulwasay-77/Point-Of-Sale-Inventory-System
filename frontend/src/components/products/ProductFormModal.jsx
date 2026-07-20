@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Modal from '../common/Modal'
 import Icon from '../common/Icon'
 import { categoryService } from '../../services/categoryService'
+import { productService } from '../../services/productService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -16,10 +17,22 @@ import { usePermissions } from '../../hooks/usePermissions'
  * this too; hiding it here is a UX nicety, not the actual security
  * boundary). Everyone with product-edit access still sees the retail
  * Price field, since that's needed to create a product at all.
+ *
+ * Retail/wholesale price auto-fill from cost + target margin, same
+ * formula as the Purchases page's suggestion ("margin" = % of the
+ * selling price that's profit). It writes straight into the Price/
+ * Wholesale fields — not a separate "suggested, click to apply" banner —
+ * but the moment you type into either field yourself, that field stops
+ * auto-following; changing cost or margin again won't overwrite a value
+ * you've deliberately chosen. Both fields stay fully editable always.
+ *
+ * Barcode is a distinct generated code (not the SKU) — see the Generate
+ * button next to that field, gated behind BARCODES_MANAGE (Admin only).
  */
 export default function ProductFormModal({ isOpen, onClose, onSave, initialValues }) {
   const { has } = usePermissions()
   const canManagePricing = has('PRICING_MANAGE')
+  const canManageBarcodes = has('BARCODES_MANAGE')
 
   const [categories, setCategories] = useState([])
   const [form, setForm] = useState({
@@ -44,6 +57,12 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   const [imageFile, setImageFile] = useState(null)
   const [errors, setErrors] = useState({})
   const [isSaving, setIsSaving] = useState(false)
+  const [isGeneratingBarcode, setIsGeneratingBarcode] = useState(false)
+  // Once true, cost/margin changes stop auto-filling that field — the
+  // admin has taken over. Reset whenever the form re-opens (see the
+  // isOpen effect below).
+  const [priceTouched, setPriceTouched] = useState(false)
+  const [wholesaleTouched, setWholesaleTouched] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -77,17 +96,47 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
       setImagePreview(initialValues?.image ? toImageUrl(initialValues.image) : null)
       setImageFile(null)
       setErrors({})
+      // Editing an existing product: its price was already a deliberate
+      // choice, so don't auto-overwrite it just because cost/margin
+      // happen to be filled in already. Only a brand new product starts
+      // "untouched", so the very first cost+margin entry can auto-fill.
+      setPriceTouched(Boolean(initialValues))
+      setWholesaleTouched(Boolean(initialValues))
     }
   }, [isOpen, initialValues])
 
   // Scanning a barcode while this form is open fills the Barcode field
-  // directly — handy for onboarding a new product: scan it once here
-  // instead of typing the number off the label. If left blank, the
-  // backend auto-generates one from the SKU on save.
+  // directly — handy for onboarding a new product that already has a
+  // manufacturer barcode: scan it once here instead of typing the number
+  // off the label.
   useBarcodeScanner(
     (code) => setForm((prev) => ({ ...prev, barcode: code })),
     { enabled: isOpen },
   )
+
+  /** Generates a distinct, unique barcode (not the SKU). For an existing
+   *  product this calls the backend so it's saved immediately, without
+   *  waiting for "Save Product" — handy since the Barcode Labels page can
+   *  then print it right away. For a brand new product (no id yet), a
+   *  temporary code is filled in locally and only actually saved once the
+   *  form itself is submitted. */
+  async function handleGenerateBarcode() {
+    if (initialValues?.id) {
+      setIsGeneratingBarcode(true)
+      try {
+        const res = await productService.generateBarcode(initialValues.id)
+        setForm((prev) => ({ ...prev, barcode: res.data.data.barcode }))
+      } catch {
+        setErrors((prev) => ({ ...prev, barcode: 'Could not generate a barcode. Try again.' }))
+      } finally {
+        setIsGeneratingBarcode(false)
+      }
+    } else {
+      let code = ''
+      for (let i = 0; i < 12; i += 1) code += Math.floor(Math.random() * 10)
+      setForm((prev) => ({ ...prev, barcode: code }))
+    }
+  }
 
   // Default the category dropdown to the first loaded category once
   // categories arrive, if nothing is selected yet (create mode).
@@ -105,8 +154,30 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   }
 
   function handleChange(field, value) {
+    if (field === 'price') setPriceTouched(true)
+    if (field === 'wholesalePrice') setWholesaleTouched(true)
     setForm((prev) => ({ ...prev, [field]: value }))
   }
+
+  // Auto-fill retail/wholesale price from cost + target margin — same
+  // formula as the Purchases page's suggested price ("margin" = % of the
+  // selling price that's profit, so price = cost / (1 - margin/100)).
+  // Only fills a field the admin hasn't manually edited yet this session.
+  useEffect(() => {
+    if (!canManagePricing) return
+    const cost = Number(form.costPrice)
+    const margin = Number(form.targetMarginPct)
+    if (!form.costPrice || !form.targetMarginPct || margin <= 0 || margin >= 100) return
+
+    const suggested = Math.round((cost / (1 - margin / 100)) * 100) / 100
+    setForm((prev) => {
+      const next = { ...prev }
+      if (!priceTouched) next.price = String(suggested)
+      if (!wholesaleTouched) next.wholesalePrice = String(suggested)
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.costPrice, form.targetMarginPct, priceTouched, wholesaleTouched, canManagePricing])
 
   function handleImageChange(e) {
     const file = e.target.files?.[0]
@@ -235,6 +306,9 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               placeholder="0.00"
             />
             {errors.price && <p className="text-xs text-rose mt-1">{errors.price}</p>}
+            {!priceTouched && form.costPrice && form.targetMarginPct && (
+              <p className="text-xs text-teal-dark mt-1">Auto-filled from cost + target margin — edit anytime.</p>
+            )}
           </div>
 
           <div>
@@ -372,18 +446,34 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
 
           <div className="sm:col-span-2">
             <label className="label-text" htmlFor="prod-barcode">
-              Barcode <span className="text-ink-muted font-normal">(optional — scan, type, or leave blank to auto-generate from SKU)</span>
+              Barcode <span className="text-ink-muted font-normal">(optional — scan an existing one, or generate a new code)</span>
             </label>
-            <div className="relative">
-              <Icon name="barcode" className="h-4 w-4 text-ink-muted absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                id="prod-barcode"
-                className="input-field figure pl-9"
-                value={form.barcode}
-                onChange={(e) => handleChange('barcode', e.target.value)}
-                placeholder="Scan with a barcode scanner, or leave blank"
-              />
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Icon name="barcode" className="h-4 w-4 text-ink-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  id="prod-barcode"
+                  className="input-field figure pl-9"
+                  value={form.barcode}
+                  onChange={(e) => handleChange('barcode', e.target.value)}
+                  placeholder="Scan with a barcode scanner, or generate one →"
+                />
+              </div>
+              {canManageBarcodes && (
+                <button
+                  type="button"
+                  onClick={handleGenerateBarcode}
+                  disabled={isGeneratingBarcode}
+                  className="btn-outline shrink-0 text-sm transition-all duration-200 hover:-translate-y-0.5"
+                >
+                  {isGeneratingBarcode ? 'Generating…' : 'Generate'}
+                </button>
+              )}
             </div>
+            {errors.barcode && <p className="text-xs text-rose mt-1">{errors.barcode}</p>}
+            {initialValues?.id && canManageBarcodes && (
+              <p className="text-xs text-ink-muted mt-1">Generating here saves immediately — no need to click Save Product first.</p>
+            )}
           </div>
 
           <div className="sm:col-span-2 border-t border-line pt-4 mt-1">
