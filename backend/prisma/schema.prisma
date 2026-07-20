@@ -1,0 +1,659 @@
+
+
+// =====================================================
+// POS & INVENTORY MANAGEMENT SYSTEM - DATABASE SCHEMA
+// =====================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================
+// ENUMS
+// =====================================================
+
+enum Role {
+  ADMIN
+  ACCOUNTANT
+  SALES_STAFF
+  WAREHOUSE_STAFF
+}
+
+enum UomType {
+  BOX
+  SQ_FT
+  SQ_M
+  LENGTH
+  BUNDLE
+  PIECE
+}
+
+enum MovementType {
+  STOCK_IN
+  SALE
+  TRANSFER_OUT
+  TRANSFER_IN
+  ADJUSTMENT
+  VOID_REVERSAL
+}
+
+enum InvoiceStatus {
+  COMPLETED
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  CREDIT
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+enum CustomerType {
+  RETAIL
+  WHOLESALE
+  CONTRACTOR
+}
+
+enum PaidStatus {
+  PENDING
+  PAID
+}
+
+// PERCENTAGE: discount_value is a % off (e.g. 5 = 5% off).
+// FLAT: discount_value is a flat currency amount off, per unit.
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
+
+// =====================================================
+// USERS & AUTH
+// =====================================================
+
+model User {
+  id              String   @id @default(uuid())
+  name            String
+  email           String   @unique
+  password_hash   String
+  role            Role
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  created_invoices Invoice[] @relation("CreatedByUser")
+  employee         Employee?
+  audit_logs       AuditLog[]
+  login_attempts   LoginAttempt[]
+  permission_overrides UserPermission[]
+
+  @@map("users")
+}
+
+// Granular permission overrides on top of a user's role defaults (see
+// backend/src/config/permissions.js for the permission list + role
+// defaults). granted=true adds a permission the role wouldn't normally
+// have; granted=false revokes one the role would normally have.
+model UserPermission {
+  id         String   @id @default(uuid())
+  user_id    String   @map("user_id")
+  permission String
+  granted    Boolean
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, permission])
+  @@map("user_permissions")
+}
+
+model LoginAttempt {
+  id          String   @id @default(uuid())
+  user_id     String?  @map("user_id")
+  email       String
+  success     Boolean
+  ip_address  String?
+  user_agent  String?
+  created_at  DateTime @default(now())
+
+  user        User?    @relation(fields: [user_id], references: [id])
+
+  @@map("login_attempts")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  user_id     String
+  action      String
+  entity_type String
+  entity_id   String
+  changes     Json?
+  ip_address  String?
+  created_at  DateTime @default(now())
+
+  user        User     @relation(fields: [user_id], references: [id])
+
+  @@map("audit_logs")
+}
+
+// =====================================================
+// CATALOG
+// =====================================================
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  parent_id   String?   @map("parent_id")
+  description String?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  parent      Category? @relation("CategoryHierarchy", fields: [parent_id], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id                String    @id @default(uuid())
+  name              String
+  sku               String    @unique
+  category_id       String?   @map("category_id")
+  brand             String?
+  base_uom          UomType
+  coverage_per_box  Decimal?  @map("coverage_per_box")
+  conversion_factor Decimal?  @map("conversion_factor")
+  retail_price      Decimal   @map("retail_price")
+  wholesale_price   Decimal   @map("wholesale_price")
+  cost_price        Decimal   @map("cost_price")
+  hsn_code          String    @map("hsn_code")
+  gst_rate          Decimal   @map("gst_rate")
+  // Standing discount for this product. Applied as the default on a POS
+  // cart line, but always editable per sale (see InvoiceItem.discount_*).
+  // Editing gst_rate, these two fields, and target_margin_pct is
+  // restricted to the PRICING_MANAGE permission (Admin only by default) —
+  // see products.service.js#stripUnauthorizedPricingFields.
+  discount_type     DiscountType @map("discount_type") @default(PERCENTAGE)
+  discount_value    Decimal   @map("discount_value") @default(0)
+  // Target margin as a % of the selling price (not markup on cost) — e.g.
+  // 30 means "30% of what the customer pays should be profit". Used only
+  // to compute a *suggested* retail/wholesale price after a purchase
+  // changes the product's cost; never auto-applied (see purchases.service.js).
+  target_margin_pct Decimal?  @map("target_margin_pct")
+  is_batch_tracked  Boolean   @map("is_batch_tracked") @default(false)
+  reorder_threshold Int       @map("reorder_threshold") @default(5)
+  image_url         String?   @map("image_url")
+  barcode           String?   @unique
+  is_active         Boolean   @default(true)
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  category          Category?                @relation(fields: [category_id], references: [id])
+  variants          ProductVariant[]
+  stock_levels      StockLevel[]
+  batches           Batch[]
+  stock_movements   StockMovement[]
+  kit_components    KitComponent[]           @relation("ComponentProduct")
+  invoice_items     InvoiceItem[]
+  purchase_items    PurchaseOrderItem[]
+  transfers         StockTransfer[]
+  cost_lots         CostLot[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id                String    @id @default(uuid())
+  product_id        String    @map("product_id")
+  variant_name      String    @map("variant_name")
+  sku               String    @unique
+  price_adjustment  Decimal?  @map("price_adjustment")
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  product           Product   @relation(fields: [product_id], references: [id])
+
+  @@unique([product_id, variant_name])
+  @@map("product_variants")
+}
+
+// =====================================================
+// KITS
+// =====================================================
+
+model Kit {
+  id          String    @id @default(uuid())
+  name        String
+  sku         String    @unique
+  kit_price   Decimal   @map("kit_price")
+  is_active   Boolean   @default(true)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  components  KitComponent[]
+  invoice_items InvoiceItem[]
+
+  @@map("kits")
+}
+
+model KitComponent {
+  id                   String    @id @default(uuid())
+  kit_id               String    @map("kit_id")
+  component_product_id String    @map("component_product_id")
+  quantity             Decimal
+
+  kit                  Kit       @relation(fields: [kit_id], references: [id])
+  component_product    Product   @relation("ComponentProduct", fields: [component_product_id], references: [id])
+
+  @@unique([kit_id, component_product_id])
+  @@map("kit_components")
+}
+
+// =====================================================
+// WAREHOUSE & INVENTORY
+// =====================================================
+
+model Warehouse {
+  id          String    @id @default(uuid())
+  name        String
+  address     String?
+  is_active   Boolean   @default(true)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  stock_levels        StockLevel[]
+  stock_movements     StockMovement[]
+  from_transfers      StockTransfer[] @relation("FromWarehouse")
+  to_transfers        StockTransfer[] @relation("ToWarehouse")
+  invoices            Invoice[]
+  purchase_orders     PurchaseOrder[]
+  cost_lots           CostLot[]
+
+  @@map("warehouses")
+}
+
+model Batch {
+  id            String    @id @default(uuid())
+  product_id    String    @map("product_id")
+  batch_number  String    @map("batch_number")
+  shade_code    String?   @map("shade_code")
+  received_date DateTime  @map("received_date")
+  created_at    DateTime  @default(now())
+
+  product       Product   @relation(fields: [product_id], references: [id])
+  stock_levels  StockLevel[]
+  stock_movements StockMovement[]
+  invoice_items  InvoiceItem[]
+  transfers      StockTransfer[]
+  cost_lots      CostLot[]
+
+  @@unique([product_id, batch_number])
+  @@map("batches")
+}
+
+// FIFO costing. Every purchase creates a new lot at whatever it actually
+// cost — stock is never blocked and never averaged into a blended price;
+// the customer always sees one current selling price. A sale walks lots
+// oldest-first (created_at asc) and consumes quantity_remaining until the
+// sold quantity is covered, so a single sale can transparently draw from
+// more than one lot (e.g. 8 units left in an old cheaper lot + 12 from a
+// newer one) without ever showing the customer two prices. For
+// batch-tracked products, lots are scoped to a specific batch_id (so cost
+// is per-batch, as accurate as it gets); for everything else batch_id is
+// null and lots are scoped to the product as a whole.
+model CostLot {
+  id                 String    @id @default(uuid())
+  product_id         String    @map("product_id")
+  batch_id           String?   @map("batch_id")
+  warehouse_id       String    @map("warehouse_id")
+  purchase_order_id  String?   @map("purchase_order_id")
+  unit_cost          Decimal   @map("unit_cost")
+  quantity_received  Decimal   @map("quantity_received")
+  quantity_remaining Decimal   @map("quantity_remaining")
+  created_at         DateTime  @default(now())
+
+  product            Product        @relation(fields: [product_id], references: [id])
+  batch              Batch?         @relation(fields: [batch_id], references: [id])
+  warehouse          Warehouse      @relation(fields: [warehouse_id], references: [id])
+  purchase_order     PurchaseOrder? @relation(fields: [purchase_order_id], references: [id])
+
+  @@index([product_id, batch_id, created_at])
+  @@map("cost_lots")
+}
+
+model StockLevel {
+  id           String   @id @default(uuid())
+  product_id   String   @map("product_id")
+  batch_id     String?  @map("batch_id")
+  warehouse_id String   @map("warehouse_id")
+  quantity     Decimal
+
+  product      Product   @relation(fields: [product_id], references: [id])
+  batch        Batch?    @relation(fields: [batch_id], references: [id])
+  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
+
+  @@unique([product_id, batch_id, warehouse_id])
+  @@map("stock_levels")
+}
+
+model StockMovement {
+  id                 String        @id @default(uuid())
+  product_id         String        @map("product_id")
+  batch_id           String?       @map("batch_id")
+  warehouse_id       String        @map("warehouse_id")
+  movement_type      MovementType
+  quantity           Decimal
+  reference_note     String?       @map("reference_note")
+  invoice_id         String?       @map("invoice_id")
+  purchase_order_id  String?       @map("purchase_order_id")
+  stock_transfer_id  String?       @map("stock_transfer_id")
+  created_at         DateTime      @default(now())
+  created_by         String        @map("created_by")
+
+  product            Product       @relation(fields: [product_id], references: [id])
+  batch              Batch?        @relation(fields: [batch_id], references: [id])
+  warehouse          Warehouse     @relation(fields: [warehouse_id], references: [id])
+  invoice            Invoice?      @relation(fields: [invoice_id], references: [id])
+  purchase_order     PurchaseOrder? @relation(fields: [purchase_order_id], references: [id])
+  stock_transfer     StockTransfer? @relation(fields: [stock_transfer_id], references: [id])
+
+  @@map("stock_movements")
+}
+
+model StockTransfer {
+  id                       String    @id @default(uuid())
+  source_warehouse_id      String    @map("source_warehouse_id")
+  destination_warehouse_id String    @map("destination_warehouse_id")
+  product_id               String    @map("product_id")
+  batch_id                 String?   @map("batch_id")
+  quantity                 Decimal
+  status                   String    @default("PENDING")
+  requested_date           DateTime  @default(now())
+  completed_date           DateTime? @map("completed_date")
+  created_by               String    @map("created_by")
+
+  source_warehouse         Warehouse @relation("FromWarehouse", fields: [source_warehouse_id], references: [id])
+  destination_warehouse    Warehouse @relation("ToWarehouse", fields: [destination_warehouse_id], references: [id])
+  product                  Product   @relation(fields: [product_id], references: [id])
+  batch                    Batch?    @relation(fields: [batch_id], references: [id])
+  movements                StockMovement[]
+
+  @@map("stock_transfers")
+}
+
+// =====================================================
+// CUSTOMERS
+// =====================================================
+
+model Customer {
+  id            String    @id @default(uuid())
+  name          String
+  contact_phone String
+  contact_email String?
+  address       String?
+  customer_type CustomerType @default(RETAIL)
+  credit_limit  Decimal?  @map("credit_limit")
+  gstin         String?
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  invoices      Invoice[]
+  payments      Payment[]
+  ledger_entries CustomerLedgerEntry[]
+
+  @@map("customers")
+}
+
+model CustomerLedgerEntry {
+  id          String   @id @default(uuid())
+  customer_id String   @map("customer_id")
+  entry_type  String
+  amount      Decimal
+  balance_after Decimal @map("balance_after")
+  invoice_id  String?  @map("invoice_id")
+  description String?
+  created_at  DateTime @default(now())
+  created_by  String   @map("created_by")
+
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  invoice     Invoice? @relation(fields: [invoice_id], references: [id])
+
+  @@map("customer_ledger_entries")
+}
+
+// =====================================================
+// INVOICES & SALES
+// =====================================================
+
+model Invoice {
+  id             String         @id @default(uuid())
+  invoice_number String         @unique @map("invoice_number")
+  customer_id    String         @map("customer_id")
+  warehouse_id   String         @map("warehouse_id")
+  subtotal       Decimal
+  discount       Decimal        @default(0)
+  cgst           Decimal        @default(0)
+  sgst           Decimal        @default(0)
+  igst           Decimal        @default(0)
+  total_amount   Decimal        @map("total_amount")
+  amount_paid    Decimal        @map("amount_paid") @default(0)
+  balance_due    Decimal        @map("balance_due") @default(0)
+  change_due     Decimal        @map("change_due") @default(0)
+  payment_method PaymentMethod  @map("payment_method") @default(CASH)
+  status         InvoiceStatus  @default(COMPLETED)
+  created_by     String         @map("created_by")
+  created_at     DateTime       @default(now())
+  voided_at      DateTime?      @map("voided_at")
+  voided_by      String?        @map("voided_by")
+  void_reason    String?        @map("void_reason")
+
+  customer       Customer       @relation(fields: [customer_id], references: [id])
+  warehouse      Warehouse      @relation(fields: [warehouse_id], references: [id])
+  created_by_user User          @relation("CreatedByUser", fields: [created_by], references: [id])
+  items          InvoiceItem[]
+  payments       Payment[]
+  stock_movements StockMovement[]
+  ledger_entries CustomerLedgerEntry[]
+  commissions    CommissionRecord[]
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoice_id  String   @map("invoice_id")
+  product_id  String?  @map("product_id")
+  kit_id      String?  @map("kit_id")
+  batch_id    String?  @map("batch_id")
+  quantity    Decimal
+  uom_used    UomType  @map("uom_used")
+  unit_price  Decimal  @map("unit_price")
+  // Discount actually applied to this line at time of sale — starts as
+  // the product's standing discount but can be overridden per sale at
+  // checkout. Frozen here so a later change to the product's default
+  // discount never rewrites a past invoice.
+  discount_type  DiscountType @map("discount_type") @default(PERCENTAGE)
+  discount_value Decimal      @map("discount_value") @default(0)
+  discount_amount Decimal     @map("discount_amount") @default(0)
+  line_total  Decimal  @map("line_total")
+  // Cost basis for this line, computed via FIFO lot consumption at sale
+  // time (see sales.service.js#consumeCostLotsFifo) and frozen — margin
+  // reports read this instead of recomputing from the product's *current*
+  // cost, which may have moved since.
+  cogs_amount Decimal  @map("cogs_amount") @default(0)
+
+  invoice     Invoice  @relation(fields: [invoice_id], references: [id])
+  product     Product? @relation(fields: [product_id], references: [id])
+  kit         Kit?     @relation(fields: [kit_id], references: [id])
+  batch       Batch?   @relation(fields: [batch_id], references: [id])
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id          String         @id @default(uuid())
+  invoice_id  String?        @map("invoice_id")
+  customer_id String?        @map("customer_id")
+  supplier_id String?        @map("supplier_id")
+  amount      Decimal
+  method      PaymentMethod
+  payment_date DateTime      @default(now())
+  reference_no String?       @map("reference_no")
+  created_by  String         @map("created_by")
+
+  invoice     Invoice?       @relation(fields: [invoice_id], references: [id])
+  customer    Customer?      @relation(fields: [customer_id], references: [id])
+  supplier    Supplier?      @relation(fields: [supplier_id], references: [id])
+
+  @@map("payments")
+}
+
+// =====================================================
+// SUPPLIERS & PURCHASE
+// =====================================================
+
+model Supplier {
+  id            String    @id @default(uuid())
+  name          String
+  contact_phone String
+  contact_email String?
+  address       String?
+  payment_terms String?
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  purchase_orders PurchaseOrder[]
+  payments        Payment[]
+  ledger_entries  SupplierLedgerEntry[]
+
+  @@map("suppliers")
+}
+
+model SupplierLedgerEntry {
+  id               String   @id @default(uuid())
+  supplier_id      String   @map("supplier_id")
+  entry_type       String
+  amount           Decimal
+  balance_after    Decimal  @map("balance_after")
+  purchase_order_id String? @map("purchase_order_id")
+  description      String?
+  created_at       DateTime @default(now())
+  created_by       String   @map("created_by")
+
+  supplier         Supplier @relation(fields: [supplier_id], references: [id])
+  purchase_order   PurchaseOrder? @relation(fields: [purchase_order_id], references: [id])
+
+  @@map("supplier_ledger_entries")
+}
+
+model PurchaseOrder {
+  id               String    @id @default(uuid())
+  po_number        String    @unique @map("po_number")
+  supplier_id      String    @map("supplier_id")
+  warehouse_id     String    @map("warehouse_id")
+  status           PurchaseOrderStatus @default(DRAFT)
+  order_date       DateTime  @default(now())
+  expected_delivery DateTime? @map("expected_delivery")
+  received_date    DateTime? @map("received_date")
+  created_by       String    @map("created_by")
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  supplier         Supplier  @relation(fields: [supplier_id], references: [id])
+  warehouse        Warehouse @relation(fields: [warehouse_id], references: [id])
+  items            PurchaseOrderItem[]
+  stock_movements  StockMovement[]
+  ledger_entries   SupplierLedgerEntry[]
+  cost_lots        CostLot[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                String    @id @default(uuid())
+  purchase_order_id String    @map("purchase_order_id")
+  product_id        String    @map("product_id")
+  quantity_ordered  Decimal   @map("quantity_ordered")
+  quantity_received Decimal   @map("quantity_received") @default(0)
+  unit_cost         Decimal   @map("unit_cost")
+  batch_number      String?   @map("batch_number")
+  shade_code        String?   @map("shade_code")
+
+  purchase_order    PurchaseOrder @relation(fields: [purchase_order_id], references: [id])
+  product           Product    @relation(fields: [product_id], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+// =====================================================
+// EMPLOYEES & PAYROLL
+// =====================================================
+
+model Employee {
+  id              String   @id @default(uuid())
+  user_id         String?  @unique @map("user_id")
+  name            String
+  role_title      String   @map("role_title")
+  base_salary     Decimal  @map("base_salary")
+  commission_rate Decimal? @map("commission_rate")
+  is_active       Boolean  @default(true)
+  hire_date       DateTime @map("hire_date") @default(now())
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  user            User?    @relation(fields: [user_id], references: [id])
+  payroll_records PayrollRecord[]
+  commissions     CommissionRecord[]
+
+  @@map("employees")
+}
+
+model PayrollRecord {
+  id                String     @id @default(uuid())
+  employee_id       String     @map("employee_id")
+  period_start      DateTime   @map("period_start")
+  period_end        DateTime   @map("period_end")
+  base_salary_amount Decimal    @map("base_salary_amount")
+  commission_amount Decimal    @map("commission_amount") @default(0)
+  total_payable     Decimal    @map("total_payable")
+  paid_status       PaidStatus @default(PENDING)
+  paid_date         DateTime?  @map("paid_date")
+  created_at        DateTime   @default(now())
+  updated_at        DateTime   @updatedAt
+  created_by        String     @map("created_by")
+
+  employee          Employee   @relation(fields: [employee_id], references: [id])
+
+  @@map("payroll_records")
+}
+
+model CommissionRecord {
+  id               String   @id @default(uuid())
+  employee_id      String   @map("employee_id")
+  invoice_id       String   @map("invoice_id")
+  sale_amount      Decimal  @map("sale_amount")
+  commission_rate  Decimal  @map("commission_rate")
+  commission_amount Decimal  @map("commission_amount")
+  created_at       DateTime @default(now())
+
+  employee         Employee @relation(fields: [employee_id], references: [id])
+  invoice          Invoice  @relation(fields: [invoice_id], references: [id])
+
+  @@unique([invoice_id, employee_id])
+  @@map("commission_records")
+}

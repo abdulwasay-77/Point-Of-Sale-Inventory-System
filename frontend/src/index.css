@@ -1,0 +1,517 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* Global base styles                                                  */
+/* ------------------------------------------------------------------ */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible keyboard focus ring everywhere — accessibility floor */
+:focus-visible {
+  outline: 2px solid #e8a33d;
+  outline-offset: 2px;
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Hide scrollbar cross-browser while keeping the element scrollable.
+   Used on the sidebar nav list so a growing item list can still scroll
+   without a visible scrollbar track. */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Printable receipt                                                   */
+/* Scopes window.print() to just the receipt ticket (InvoiceReceipt),  */
+/* instead of printing the whole app shell. #receipt-print-area is set */
+/* on the receipt's root element.                                      */
+/* ------------------------------------------------------------------ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #receipt-print-area,
+  #receipt-print-area * {
+    visibility: visible;
+  }
+  #receipt-print-area {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 80mm;
+    padding: 4mm;
+    margin: 0;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reusable component-level classes                                    */
+/* ------------------------------------------------------------------ */
+@layer components {
+  /* Page section heading — uses the display face deliberately, not everywhere */
+  .page-title {
+    @apply font-display text-xl font-semibold text-ink tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-ink-muted mt-1;
+  }
+
+  /* Standard card surface */
+  .card {
+    @apply bg-white rounded-xl border border-line shadow-card;
+  }
+
+  /* Signature element: a "receipt" style panel with a perforated tear edge.
+     Used for the POS cart summary and dashboard stat highlights. */
+  .receipt-panel {
+    @apply relative bg-white rounded-xl border border-line shadow-receipt;
+  }
+  .receipt-panel::after {
+    content: '';
+    @apply absolute left-0 right-0 bottom-0 h-[2px] bg-tear-line opacity-70;
+  }
+
+  /* Data figures (prices, quantities, SKUs) always use mono for a ledger feel */
+  .figure {
+    @apply font-mono tabular-nums;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-ink text-paper hover:bg-ink-light;
+  }
+  .btn-accent {
+    @apply btn bg-amber text-ink hover:bg-amber-dark hover:text-white;
+  }
+  .btn-outline {
+    @apply btn border border-line bg-white text-ink hover:bg-paper-dim;
+  }
+  .btn-danger {
+    @apply btn bg-rose text-white hover:bg-rose/90;
+  }
+  .btn-ghost {
+    @apply btn text-ink-muted hover:bg-paper-dim hover:text-ink;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-muted/70 focus:border-amber focus:ring-1 focus:ring-amber outline-none transition;
+  }
+
+  .label-text {
+    @apply block text-xs font-medium text-ink-muted mb-1.5;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset transition-colors duration-200;
+  }
+  .badge-teal {
+    @apply badge bg-teal-light text-teal-dark ring-teal/20;
+  }
+  .badge-rose {
+    @apply badge bg-rose-light text-rose ring-rose/25;
+  }
+  .badge-amber {
+    @apply badge bg-amber-light text-amber-dark ring-amber/25;
+  }
+
+  .table-base {
+    @apply w-full text-sm text-left border-collapse;
+  }
+  .table-base thead th {
+    @apply text-xs uppercase tracking-wide text-ink-muted font-medium py-3 px-4 border-b border-line;
+  }
+  .table-base tbody td {
+    @apply py-3 px-4 border-b border-line/70 text-ink;
+  }
+  .table-base tbody tr:hover {
+    @apply bg-paper-dim/60;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chatbot floating button + panel                                     */
+/* ------------------------------------------------------------------ */
+
+/* Collapsed toggle button: fades to a translucent, slightly blurred
+   "ghost" state when idle so it doesn't sit heavily on top of other
+   page content (e.g. the POS checkout button), but is never fully
+   hidden — a hover/focus brings it back to full strength immediately. */
+.chat-fab {
+  opacity: 0.5;
+  filter: blur(0.5px);
+  transform: scale(0.92);
+  transition: opacity 250ms ease, filter 250ms ease, transform 250ms ease;
+}
+.chat-fab:hover,
+.chat-fab:focus-visible {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+/* Open chat panel: soft pulsing amber glow around the border, so the
+   panel visually separates itself from whatever page is behind it. */
+@keyframes chat-panel-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.45), 0 0 16px 2px rgba(232, 163, 61, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.65), 0 0 28px 6px rgba(232, 163, 61, 0.4);
+  }
+}
+.chat-panel-glow {
+  animation: chat-panel-glow 2.6s ease-in-out infinite;
+}
+
+/* Dashboard stat-card glow: same soft-pulse technique as
+   .chat-panel-glow above, tuned lighter so it can sit ambiently on a
+   card (rather than only appearing on an open, foregrounded panel).
+   Applied sparingly — just the "Today's Sales" stat card. */
+@keyframes stat-card-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.35), 0 0 14px 1px rgba(232, 163, 61, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.55), 0 0 22px 4px rgba(232, 163, 61, 0.3);
+  }
+}
+.stat-card-glow {
+  animation: stat-card-glow 3.2s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Premium surface system — card lift, tone glows, shine sweep          */
+/* Shared building blocks so the "premium" treatment stays consistent   */
+/* across Dashboard, Products, and future pages instead of one-off CSS. */
+/* ------------------------------------------------------------------ */
+
+/* Base premium card: slightly rounder, deeper resting shadow, and a
+   smooth lift + shadow-bloom on hover. Combine with a .glow-* tone
+   class below to get a colored ring + halo on top of the lift. */
+.card-premium {
+  @apply relative bg-white rounded-2xl border border-line;
+  box-shadow: 0 1px 2px rgba(31, 36, 48, 0.05), 0 2px 10px rgba(31, 36, 48, 0.045);
+  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 260ms ease, border-color 260ms ease;
+}
+.card-premium:hover {
+  transform: translateY(-4px);
+}
+
+/* Diagonal light sweep across a card on hover — the classic "premium"
+   tell. Needs overflow-hidden on the element it's applied to (each
+   consumer already has rounded corners, so clipping looks intentional). */
+.shine-sweep {
+  position: relative;
+  overflow: hidden;
+}
+.shine-sweep::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.55) 46%, transparent 62%);
+  transform: translateX(-130%) skewX(-12deg);
+  transition: transform 750ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.shine-sweep:hover::before {
+  transform: translateX(130%) skewX(-12deg);
+}
+
+/* Tone-based glow ring on hover — a crisp 1px border paired with a soft
+   diffused halo so the border reads as "lit up", not just recolored.
+   Mirrors the tone system already used for icon backgrounds/badges. */
+.glow-ink:hover {
+  border-color: #1f2430;
+  box-shadow: 0 10px 30px -8px rgba(31, 36, 48, 0.35), 0 0 0 1px rgba(31, 36, 48, 0.15),
+    0 0 22px 2px rgba(31, 36, 48, 0.14);
+}
+.glow-amber:hover {
+  border-color: #e8a33d;
+  box-shadow: 0 10px 30px -8px rgba(232, 163, 61, 0.4), 0 0 0 1px rgba(232, 163, 61, 0.35),
+    0 0 26px 4px rgba(232, 163, 61, 0.3);
+}
+.glow-teal:hover {
+  border-color: #2f6f6b;
+  box-shadow: 0 10px 30px -8px rgba(47, 111, 107, 0.4), 0 0 0 1px rgba(47, 111, 107, 0.3),
+    0 0 26px 4px rgba(47, 111, 107, 0.26);
+}
+.glow-rose:hover {
+  border-color: #c1502e;
+  box-shadow: 0 10px 30px -8px rgba(193, 80, 46, 0.4), 0 0 0 1px rgba(193, 80, 46, 0.3),
+    0 0 26px 4px rgba(193, 80, 46, 0.26);
+}
+
+/* Icon badge pop: used with `group` on the parent card so the little
+   icon square perks up (scale + slight rotation) whenever the whole
+   card is hovered — a cheap but effective sense of "alive" UI. */
+.icon-pop {
+  transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 320ms ease;
+}
+.group:hover .icon-pop {
+  transform: scale(1.12) rotate(-4deg);
+}
+
+/* Soft ambient blobs behind dashboard content — pure decoration, sits
+   behind everything (negative z-index) and never intercepts clicks. */
+.dashboard-ambient {
+  position: relative;
+}
+.dashboard-ambient::before,
+.dashboard-ambient::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.dashboard-ambient::before {
+  top: -80px;
+  right: -60px;
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(circle, rgba(232, 163, 61, 0.35), transparent 70%);
+}
+.dashboard-ambient::after {
+  top: 260px;
+  left: -80px;
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(circle, rgba(47, 111, 107, 0.28), transparent 70%);
+}
+
+/* Premium table: a soft left accent bar + faint tinted wash sweeps in
+   on row hover (via inset box-shadow, so it never disturbs the
+   table's column layout the way a transform/translate would). */
+.table-premium tbody tr {
+  transition: background-color 200ms ease, box-shadow 200ms ease;
+}
+.table-premium tbody tr:hover {
+  background-color: rgba(232, 163, 61, 0.06);
+  box-shadow: inset 3px 0 0 0 #e8a33d;
+}
+
+/* Small pulsing dot used ahead of "urgent" badges (e.g. low stock) so
+   the eye is drawn there first, like a live status indicator. */
+@keyframes pulse-dot {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(193, 80, 46, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(193, 80, 46, 0);
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Modal entrance — used by the shared Modal component so every        */
+/* create/edit form (products, categories, customers, suppliers,       */
+/* purchases) gets the same polished open animation for free.          */
+/* ------------------------------------------------------------------ */
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-backdrop {
+  animation: modal-backdrop-in 200ms ease-out;
+}
+.modal-panel {
+  animation: modal-panel-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Image dropzone (product image upload) — glows amber on hover so it
+   reads as an interactive target, not just a static preview box. */
+.upload-zone {
+  transition: border-color 220ms ease, box-shadow 220ms ease, background-color 220ms ease;
+}
+.upload-zone:hover {
+  border-color: #e8a33d;
+  background-color: rgba(232, 163, 61, 0.07);
+  box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.25), 0 0 18px 2px rgba(232, 163, 61, 0.18);
+}
+
+/* Small tone-colored icon square used ahead of a form section heading
+   (e.g. "Unit & batch settings"), and reused for name-initial avatars
+   in list rows (customers). Sits on the amber-light background by
+   default; override the background/text color utilities per tone
+   where needed. */
+.section-icon {
+  @apply h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-300;
+}
+.group:hover .section-icon {
+  transform: scale(1.08);
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Auth screen (Login) — dark "closed register" backdrop with the same */
+/* ambient-blob + entrance-motion language as the dashboard, so the    */
+/* very first screen already feels like part of this app.              */
+/* ------------------------------------------------------------------ */
+
+/* Soft ambient glow blobs behind the sign-in card — same technique as
+   .dashboard-ambient (radial gradient blobs, blurred, non-interactive),
+   tuned for the dark `bg-ink` auth backdrop instead of the light paper
+   background. */
+.auth-ambient {
+  position: relative;
+  overflow: hidden;
+}
+.auth-ambient::before,
+.auth-ambient::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.auth-ambient::before {
+  top: -140px;
+  left: -120px;
+  width: 440px;
+  height: 440px;
+  background: radial-gradient(circle, rgba(232, 163, 61, 0.55), transparent 70%);
+}
+.auth-ambient::after {
+  bottom: -160px;
+  right: -120px;
+  width: 480px;
+  height: 480px;
+  background: radial-gradient(circle, rgba(47, 111, 107, 0.5), transparent 70%);
+}
+
+/* Sign-in card entrance: a quiet rise + fade so the "ticket" feels handed
+   to you rather than just appearing. Mirrors .modal-panel-in's easing so
+   every "surface arriving" moment in the app moves the same way. */
+@keyframes auth-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.auth-card-in {
+  animation: auth-card-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat widget refinements                                             */
+/* ------------------------------------------------------------------ */
+
+/* Small "ready" status dot next to the Store Assistant title — teal
+   variant of the existing .pulse-dot (used for low-stock urgency), so
+   the same "live status" language reads as reassuring here instead of
+   urgent. */
+@keyframes pulse-dot-teal {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(47, 111, 107, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(47, 111, 107, 0);
+  }
+}
+.pulse-dot-teal {
+  animation: pulse-dot-teal 1.8s ease-in-out infinite;
+}
+
+/* Three-dot "typing" indicator shown while the assistant is composing a
+   reply, replacing the plain "Thinking…" text bubble with the same kind
+   of small purposeful motion used throughout the app (icon-pop, shine-
+   sweep) rather than a static label. */
+@keyframes typing-dot {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+.typing-dot {
+  animation: typing-dot 1.1s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Barcode label sheet printing                                        */
+/* ------------------------------------------------------------------ */
+
+/* Hidden on screen — the on-screen preview on BarcodeLabelsPage uses the
+   normal card/scroll chrome; this second copy is what actually prints,
+   kept as a plain grid with no app chrome around it. */
+.barcode-print-sheet {
+  display: none;
+}
+
+@media print {
+  /* Hide the whole app shell (sidebar, navbar, on-screen preview card)
+     and show only the print sheet, laid out on the page as a grid of
+     small labels — targets a normal printer/paper, no reliance on the
+     browser honoring a custom small page size. */
+  body * {
+    visibility: hidden;
+  }
+  .barcode-print-sheet,
+  .barcode-print-sheet * {
+    visibility: visible;
+  }
+  .barcode-print-sheet {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8mm;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 10mm;
+  }
+  .barcode-label {
+    break-inside: avoid;
+    border-color: #999 !important;
+  }
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+}
