@@ -1,4 +1,3 @@
-
 const ProductsService = require('./products.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const { success, created } = require('../../utils/apiResponse');
@@ -74,11 +73,24 @@ class ProductsController {
     if (!req.body.name || !req.body.sku) {
       return res.status(400).json({ success: false, message: 'Name and SKU are required' });
     }
+    // Sent as multipart/form-data (image upload shares this endpoint), so
+    // the drafted color list — see ProductFormModal's inline color
+    // builder — arrives as a JSON string in one field, not real nested
+    // form fields.
+    let variants = null;
+    if (req.body.variants !== undefined) {
+      try {
+        variants = JSON.parse(req.body.variants);
+      } catch {
+        return res.status(400).json({ success: false, message: 'Malformed color list.' });
+      }
+    }
     const actorPermissions = await getEffectivePermissions(req.user.userId, req.user.role);
     const product = await ProductsService.create(
       { ...req.body, created_by: req.user?.userId },
       req.file,
       actorPermissions,
+      variants,
     );
     created(res, product, 'Product created');
   });

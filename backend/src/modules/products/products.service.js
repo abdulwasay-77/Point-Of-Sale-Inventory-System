@@ -90,12 +90,23 @@ class ProductsService {
    * `actorPermissions` is optional so this service can still be called
    * from non-HTTP contexts (e.g. the seed script) without needing to fake
    * a permission list — in that case pricing fields are always allowed.
+   *
+   * `variants`, when the product is variant-tracked, is the list of colors
+   * drafted in the Add Product form (each { variantName, sku,
+   * priceAdjustment, stock }) — see validateVariantAllocation() for why
+   * this is required and must exactly cover `data.stock`, and why the
+   * whole thing runs in one transaction (see the block below).
    */
-  async create(rawData, imageFile, actorPermissions = null) {
+  async create(rawData, imageFile, actorPermissions = null, variants = null) {
     const data = actorPermissions === null ? rawData : stripUnauthorizedPricingFields(rawData, actorPermissions);
     const warehouseId = await getDefaultWarehouseId();
     const initialStock = Number(data.stock ?? 0);
     const costPrice = Number(data.cost_price ?? 0);
+    const isVariantTracked = data.is_variant_tracked === true || data.is_variant_tracked === 'true';
+
+    if (isVariantTracked) {
+      this.validateVariantAllocation(variants, initialStock);
+    }
 
     // Barcode is either an existing one scanned/typed in (e.g. a
     // manufacturer's own barcode), or left null here — a distinct,
@@ -103,37 +114,54 @@ class ProductsService {
     // below, not silently derived from the SKU.
     const barcode = data.barcode?.trim() || null;
 
-    const product = await prisma.product.create({
-      data: {
-        name: data.name,
-        sku: data.sku,
-        category_id: data.categoryId || data.category_id || null,
-        brand: data.brand || null,
-        base_uom: data.base_uom || 'PIECE',
-        coverage_per_box: data.coverage_per_box !== undefined && data.coverage_per_box !== '' ? Number(data.coverage_per_box) : null,
-        conversion_factor: data.conversion_factor !== undefined && data.conversion_factor !== '' ? Number(data.conversion_factor) : null,
-        is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
-        is_variant_tracked: data.is_variant_tracked === true || data.is_variant_tracked === 'true',
-        length: data.length !== undefined && data.length !== '' ? Number(data.length) : null,
-        width: data.width !== undefined && data.width !== '' ? Number(data.width) : null,
-        dimension_unit: data.dimension_unit || null,
-        retail_price: Number(data.price ?? data.retail_price ?? 0),
-        wholesale_price: Number(data.wholesale_price ?? data.price ?? 0),
-        cost_price: costPrice,
-        hsn_code: data.hsn_code || '0000',
-        gst_rate: Number(data.gst_rate ?? 0),
-        discount_type: data.discount_type === 'FLAT' ? 'FLAT' : 'PERCENTAGE',
-        discount_value: Number(data.discount_value ?? 0),
-        target_margin_pct:
-          data.target_margin_pct !== undefined && data.target_margin_pct !== '' && data.target_margin_pct !== null
-            ? Number(data.target_margin_pct)
-            : null,
-        reorder_threshold: Number(data.reorder_threshold ?? 10),
-        image_url: imageFile ? `/uploads/products/${imageFile.filename}` : null,
-        barcode,
-        is_active: true,
-      },
-    });
+    const productData = {
+      name: data.name,
+      sku: data.sku,
+      category_id: data.categoryId || data.category_id || null,
+      brand: data.brand || null,
+      base_uom: data.base_uom || 'PIECE',
+      coverage_per_box: data.coverage_per_box !== undefined && data.coverage_per_box !== '' ? Number(data.coverage_per_box) : null,
+      conversion_factor: data.conversion_factor !== undefined && data.conversion_factor !== '' ? Number(data.conversion_factor) : null,
+      is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
+      is_variant_tracked: isVariantTracked,
+      length: data.length !== undefined && data.length !== '' ? Number(data.length) : null,
+      width: data.width !== undefined && data.width !== '' ? Number(data.width) : null,
+      dimension_unit: data.dimension_unit || null,
+      retail_price: Number(data.price ?? data.retail_price ?? 0),
+      wholesale_price: Number(data.wholesale_price ?? data.price ?? 0),
+      cost_price: costPrice,
+      hsn_code: data.hsn_code || '0000',
+      gst_rate: Number(data.gst_rate ?? 0),
+      discount_type: data.discount_type === 'FLAT' ? 'FLAT' : 'PERCENTAGE',
+      discount_value: Number(data.discount_value ?? 0),
+      target_margin_pct:
+        data.target_margin_pct !== undefined && data.target_margin_pct !== '' && data.target_margin_pct !== null
+          ? Number(data.target_margin_pct)
+          : null,
+      reorder_threshold: Number(data.reorder_threshold ?? 10),
+      image_url: imageFile ? `/uploads/products/${imageFile.filename}` : null,
+      barcode,
+      is_active: true,
+    };
+
+    // Variant-tracked products never get a colorless (variant_id: null)
+    // stock row — every unit must belong to a color, otherwise it becomes
+    // unreachable from POS (the color picker there only ever lists
+    // variants, it has no "no color" option). So the product itself is
+    // created with zero base stock, and each drafted color's stock is
+    // created alongside it, all inside one transaction — if any color
+    // fails to save, the whole product creation rolls back rather than
+    // leaving a product with some colors missing.
+    if (isVariantTracked) {
+      const productId = await prisma.$transaction(async (tx) => {
+        const created = await tx.product.create({ data: productData });
+        await this.allocateVariantsInTx(tx, created.id, variants, warehouseId, costPrice, data.created_by);
+        return created.id;
+      });
+      return this.getById(productId);
+    }
+
+    const product = await prisma.product.create({ data: productData });
 
     if (initialStock > 0) {
       await prisma.stockLevel.create({
@@ -163,6 +191,90 @@ class ProductsService {
     }
 
     return this.getById(product.id);
+  }
+
+  /**
+   * Enforces that Stock Quantity is fully accounted for by the drafted
+   * colors — no more, no less — for a variant-tracked product. This is
+   * the fix for the bug where units entered in the top-level Stock
+   * Quantity field silently ended up in a colorless stock row that the
+   * POS color picker could never sell: rather than allow that split to
+   * exist at all, saving is blocked until the two numbers match exactly.
+   */
+  validateVariantAllocation(variants, declaredStock) {
+    if (!Array.isArray(variants) || variants.length === 0) {
+      const err = new Error('Add at least one color before saving a product marked "Comes in colors".');
+      err.status = 400;
+      throw err;
+    }
+    for (const v of variants) {
+      const name = (v.variantName || v.variant_name || '').trim();
+      const sku = (v.sku || '').trim();
+      if (!name) {
+        const err = new Error('Every color needs a name.');
+        err.status = 400;
+        throw err;
+      }
+      if (!sku) {
+        const err = new Error(`Color "${name}" needs its own SKU.`);
+        err.status = 400;
+        throw err;
+      }
+    }
+    const allocated = variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0);
+    if (allocated !== Number(declaredStock)) {
+      const err = new Error(
+        `Stock Quantity (${declaredStock}) must exactly match the total stock across all colors (currently ${allocated}). ` +
+          `Adjust Stock Quantity or the per-color stock so they match.`,
+      );
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  /** Creates each drafted color plus its stock/cost lot, inside an
+   *  already-open transaction. Shared by create() (brand-new product)
+   *  and update() (turning colors on for an existing product). */
+  async allocateVariantsInTx(tx, productId, variants, warehouseId, fallbackCostPrice, createdBy) {
+    for (const v of variants) {
+      const stock = Number(v.stock ?? 0);
+      const variant = await tx.productVariant.create({
+        data: {
+          product_id: productId,
+          variant_name: (v.variantName || v.variant_name || '').trim(),
+          sku: (v.sku || '').trim().toUpperCase(),
+          price_adjustment: Number(v.priceAdjustment ?? v.price_adjustment ?? 0),
+        },
+      });
+
+      if (stock > 0) {
+        await tx.stockLevel.create({
+          data: { product_id: productId, variant_id: variant.id, warehouse_id: warehouseId, quantity: stock },
+        });
+        await tx.stockMovement.create({
+          data: {
+            product_id: productId,
+            variant_id: variant.id,
+            warehouse_id: warehouseId,
+            movement_type: 'STOCK_IN',
+            quantity: stock,
+            reference_note: `Initial stock for variant "${variant.variant_name}"`,
+            created_by: createdBy,
+          },
+        });
+        const unitCost = v.costPrice !== undefined && v.costPrice !== '' ? Number(v.costPrice) : Number(fallbackCostPrice);
+        await tx.costLot.create({
+          data: {
+            product_id: productId,
+            variant_id: variant.id,
+            warehouse_id: warehouseId,
+            unit_cost: unitCost,
+            quantity_received: stock,
+            quantity_remaining: stock,
+          },
+        });
+      }
+    }
   }
 
   async update(id, rawData, imageFile, actorPermissions = null) {
@@ -217,9 +329,44 @@ class ProductsService {
       },
     });
 
+    // Whether the product will be variant-tracked *after* this update
+    // (may be flipping on right now, or may already have been on).
+    const willBeVariantTracked = data.is_variant_tracked !== undefined
+      ? (data.is_variant_tracked === true || data.is_variant_tracked === 'true')
+      : existing.is_variant_tracked;
+    const turningOnVariantTracking = willBeVariantTracked && !existing.is_variant_tracked && data.is_variant_tracked !== undefined;
+
+    if (turningOnVariantTracking) {
+      // Flipping "Comes in colors" on for a product that already has
+      // plain (colorless) stock. That stock would become permanently
+      // unreachable from POS the moment colors are on (the POS color
+      // picker only ever lists colors — see VariantBatchSelectorModal),
+      // so refuse the flip until it's been zeroed out here first — the
+      // admin can then reopen this product and add colors with their own
+      // stock via the Color Options panel below.
+      const colorlessTotal = existing.stock_levels
+        .filter((sl) => sl.variant_id === null)
+        .reduce((sum, sl) => sum + Number(sl.quantity), 0);
+      if (colorlessTotal > 0) {
+        const err = new Error(
+          `This product still has ${colorlessTotal} unit(s) of general (colorless) stock. Set Stock Quantity to 0 ` +
+            `and save first — general stock can't be sold once colors are turned on — then reopen this product to ` +
+            `add colors, each with its own stock.`,
+        );
+        err.status = 400;
+        throw err;
+      }
+    }
+
     // Optional stock adjustment: if `stock` is passed, reconcile the total
-    // stock across the default warehouse to match the new value.
-    if (data.stock !== undefined) {
+    // colorless stock across the default warehouse to match the new
+    // value. Never runs for a variant-tracked product — every unit there
+    // must belong to a color (added via the Color Options panel /
+    // VariantManager, not this field), otherwise it would end up in a
+    // colorless stock row the POS color picker can never sell, and this
+    // block's old `findFirst` (unfiltered by variant_id) could also have
+    // silently overwritten an existing color's stock row instead.
+    if (data.stock !== undefined && !willBeVariantTracked) {
       const warehouseId = await getDefaultWarehouseId();
       const currentTotal = existing.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0);
       const target = Number(data.stock);
@@ -227,7 +374,7 @@ class ProductsService {
 
       if (delta !== 0) {
         const level = await prisma.stockLevel.findFirst({
-          where: { product_id: id, warehouse_id: warehouseId, batch_id: null },
+          where: { product_id: id, warehouse_id: warehouseId, batch_id: null, variant_id: null },
         });
         if (level) {
           await prisma.stockLevel.update({

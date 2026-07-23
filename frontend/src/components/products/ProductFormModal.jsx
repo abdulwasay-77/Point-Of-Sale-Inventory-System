@@ -6,6 +6,7 @@ import { productService } from '../../services/productService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import { usePermissions } from '../../hooks/usePermissions'
 import VariantManager from './VariantManager'
+import VariantDraftBuilder from './VariantDraftBuilder'
 
 /**
  * Create/Edit form for a single product. Builds a FormData payload (so the
@@ -68,6 +69,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   // isOpen effect below).
   const [priceTouched, setPriceTouched] = useState(false)
   const [wholesaleTouched, setWholesaleTouched] = useState(false)
+  // Colors drafted for a brand-new product — see VariantDraftBuilder.
+  // Irrelevant once editing an existing product (that uses VariantManager,
+  // which talks to the API directly instead).
+  const [draftVariants, setDraftVariants] = useState([])
 
   useEffect(() => {
     if (isOpen) {
@@ -111,6 +116,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
       // "untouched", so the very first cost+margin entry can auto-fill.
       setPriceTouched(Boolean(initialValues))
       setWholesaleTouched(Boolean(initialValues))
+      setDraftVariants([])
     }
   }, [isOpen, initialValues])
 
@@ -196,12 +202,38 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     }
   }
 
+  // True only once the product is *actually* variant-tracked in the
+  // database (not just checked in this session) — this is what gates
+  // whether Stock Quantity is still a real, editable field vs. read-only,
+  // and whether colors can be managed live via the API yet. See the
+  // render block below and the VariantManager/VariantDraftBuilder split.
+  const isSavedVariantProduct = Boolean(initialValues?.id && initialValues?.isVariantTracked)
+
   function validate() {
     const next = {}
     if (!form.name.trim()) next.name = 'Product name is required.'
     if (!form.sku.trim()) next.sku = 'SKU is required.'
     if (form.price === '' || Number(form.price) < 0) next.price = 'Enter a valid price.'
-    if (form.stock === '' || Number(form.stock) < 0) next.stock = 'Enter a valid stock quantity.'
+
+    // Stock Quantity only means something as a plain number for a
+    // non-variant product, or a brand-new variant-tracked one (where it's
+    // the target the drafted colors must add up to — checked below). For
+    // an *already-saved* variant-tracked product it's purely informational
+    // (computed from its colors) and isn't submitted, so it's not
+    // validated here.
+    const isNewVariantProduct = form.isVariantTracked && !initialValues?.id
+    if (!isSavedVariantProduct) {
+      if (form.stock === '' || Number(form.stock) < 0) next.stock = 'Enter a valid stock quantity.'
+    }
+    if (isNewVariantProduct && form.stock !== '' && Number(form.stock) >= 0) {
+      const allocated = draftVariants.reduce((sum, v) => sum + Number(v.stock || 0), 0)
+      if (draftVariants.length === 0) {
+        next.variants = 'Add at least one color — each unit of stock needs to belong to a color.'
+      } else if (allocated !== Number(form.stock)) {
+        next.variants = `Stock Quantity (${form.stock}) must exactly match the total stock across all colors (currently ${allocated}).`
+      }
+    }
+
     if (canManagePricing && form.gstRate !== '' && (Number(form.gstRate) < 0 || Number(form.gstRate) > 100)) {
       next.gstRate = 'GST rate must be between 0 and 100.'
     }
@@ -230,7 +262,29 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     if (form.length !== '') formData.append('length', form.length)
     if (form.width !== '') formData.append('width', form.width)
     if (form.length !== '' || form.width !== '') formData.append('dimension_unit', form.dimensionUnit)
-    formData.append('stock', form.stock)
+
+    // For an already-saved variant-tracked product, Stock Quantity is
+    // purely informational (see validate()) — every real unit lives on a
+    // color, managed below via VariantManager, not this field — so it's
+    // left out of the request entirely rather than sent as a number the
+    // backend would just ignore. (An existing product where the checkbox
+    // was *just* checked this session still needs to send `stock` — the
+    // backend requires it to be 0 before the flag itself can be saved.)
+    if (!isSavedVariantProduct) {
+      formData.append('stock', form.stock)
+    }
+    // Brand-new variant-tracked product: hand off the drafted colors so
+    // the product and every color are created together in one request —
+    // see VariantDraftBuilder and products.service.js#create.
+    if (form.isVariantTracked && !initialValues?.id) {
+      const variantsPayload = draftVariants.map((v) => ({
+        variantName: v.variantName,
+        sku: v.sku,
+        priceAdjustment: v.priceAdjustment,
+        stock: v.stock,
+      }))
+      formData.append('variants', JSON.stringify(variantsPayload))
+    }
     if (imageFile) formData.append('image', imageFile)
 
     // Pricing fields are only sent when this user can actually manage
@@ -328,16 +382,40 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             <label className="label-text" htmlFor="prod-stock">
               Stock Quantity
             </label>
-            <input
-              id="prod-stock"
-              type="number"
-              min="0"
-              className="input-field figure"
-              value={form.stock}
-              onChange={(e) => handleChange('stock', e.target.value)}
-              placeholder="0"
-            />
+            {isSavedVariantProduct ? (
+              // Already variant-tracked in the database: every unit lives
+              // on a color now (see Color Options below) — this field
+              // isn't sent to the server at all, so it's shown read-only
+              // rather than implying it can still be edited here.
+              <>
+                <input
+                  id="prod-stock"
+                  className="input-field figure bg-paper-dim text-ink-muted"
+                  value={`${form.stock} (total across all colors)`}
+                  disabled
+                  readOnly
+                />
+                <p className="text-xs text-ink-muted mt-1">
+                  Managed via Color Options below — add stock to a color there.
+                </p>
+              </>
+            ) : (
+              <input
+                id="prod-stock"
+                type="number"
+                min="0"
+                className="input-field figure"
+                value={form.stock}
+                onChange={(e) => handleChange('stock', e.target.value)}
+                placeholder="0"
+              />
+            )}
             {errors.stock && <p className="text-xs text-rose mt-1">{errors.stock}</p>}
+            {form.isVariantTracked && !initialValues?.id && (
+              <p className="text-xs text-ink-muted mt-1">
+                This is the total you'll split across colors below — they must add up to this number exactly.
+              </p>
+            )}
           </div>
 
           {canManagePricing ? (
@@ -536,7 +614,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               <input
                 type="checkbox"
                 checked={form.isVariantTracked}
-                onChange={(e) => handleChange('isVariantTracked', e.target.checked)}
+                onChange={(e) => {
+                  handleChange('isVariantTracked', e.target.checked)
+                  if (!e.target.checked) setDraftVariants([])
+                }}
                 className="rounded border-line text-amber focus:ring-amber"
               />
               Comes in colors (e.g. paint, fittings — customer picks a color)
@@ -585,13 +666,30 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
 
           {form.isVariantTracked && (
             <div className="sm:col-span-2">
-              {initialValues?.id ? (
+              {initialValues?.id && initialValues?.isVariantTracked ? (
+                // Already variant-tracked in the database — safe to manage
+                // colors live via the API right away.
                 <VariantManager productId={initialValues.id} />
-              ) : (
+              ) : initialValues?.id ? (
+                // Existing product, but "Comes in colors" is only checked
+                // here in this session — not saved yet. Colors can't be
+                // added live yet: the backend requires Stock Quantity to
+                // be 0 before the flag itself can be turned on (see
+                // products.service.js#update), so jumping straight to
+                // VariantManager here would let colors be created against
+                // a product that's still colorless in the database.
                 <p className="text-xs text-ink-muted bg-paper-dim rounded-lg px-3 py-2.5">
-                  Save this product first, then reopen it to add color options — each color needs its own stock record.
+                  Set Stock Quantity to 0 and click Save Product first — general stock can't be sold once colors are
+                  turned on. Then reopen this product to add colors, each with its own stock.
                 </p>
+              ) : (
+                <VariantDraftBuilder
+                  variants={draftVariants}
+                  onChange={setDraftVariants}
+                  targetStock={form.stock}
+                />
               )}
+              {errors.variants && <p className="text-xs text-rose mt-2">{errors.variants}</p>}
             </div>
           )}
 
