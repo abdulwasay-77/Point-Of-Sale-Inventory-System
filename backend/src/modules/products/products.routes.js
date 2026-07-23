@@ -1,3 +1,4 @@
+
 const express = require('express');
 const ProductsController = require('./products.controller');
 const authMiddleware = require('../../middleware/authMiddleware');
@@ -14,6 +15,18 @@ router.use(authMiddleware);
 router.get('/search', ProductsController.search);
 router.get('/lookup/:code', ProductsController.lookupByCode);
 router.get('/:id/batches', ProductsController.getBatches);
+router.get('/:id/variants', ProductsController.getVariants);
+router.post('/:id/variants', permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT), ProductsController.createVariant);
+router.put(
+  '/:id/variants/:variantId',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  ProductsController.updateVariant,
+);
+router.delete(
+  '/:id/variants/:variantId',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  ProductsController.removeVariant,
+);
 router.get('/', ProductsController.getAll);
 router.get('/:id', ProductsController.getById);
 router.post(

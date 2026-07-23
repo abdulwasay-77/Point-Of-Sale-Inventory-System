@@ -59,7 +59,7 @@ class PurchasesService {
     const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Validate batch info up front so we fail before writing anything.
+    // Validate batch/variant info up front so we fail before writing anything.
     for (const line of items) {
       const product = productMap.get(line.productId);
       if (!product) {
@@ -69,6 +69,11 @@ class PurchasesService {
       }
       if (product.is_batch_tracked && !line.batchNumber?.trim()) {
         const err = new Error(`"${product.name}" is batch-tracked — a batch number is required for this line`);
+        err.status = 400;
+        throw err;
+      }
+      if (product.is_variant_tracked && !line.variantId) {
+        const err = new Error(`"${product.name}" comes in multiple colors — a color must be selected for this line`);
         err.status = 400;
         throw err;
       }
@@ -105,12 +110,15 @@ class PurchasesService {
           },
         });
 
+        const variantId = line.variantId || null;
+
         let batchId = null;
         if (product.is_batch_tracked) {
           const batch = await tx.batch.upsert({
             where: { product_id_batch_number: { product_id: line.productId, batch_number: line.batchNumber.trim() } },
             create: {
               product_id: line.productId,
+              variant_id: variantId,
               batch_number: line.batchNumber.trim(),
               shade_code: line.shadeCode?.trim() || null,
               received_date: new Date(),
@@ -121,19 +129,20 @@ class PurchasesService {
         }
 
         const existingLevel = await tx.stockLevel.findFirst({
-          where: { product_id: line.productId, warehouse_id: warehouseId, batch_id: batchId },
+          where: { product_id: line.productId, variant_id: variantId, warehouse_id: warehouseId, batch_id: batchId },
         });
         if (existingLevel) {
           await tx.stockLevel.update({ where: { id: existingLevel.id }, data: { quantity: { increment: quantity } } });
         } else {
           await tx.stockLevel.create({
-            data: { product_id: line.productId, batch_id: batchId, warehouse_id: warehouseId, quantity },
+            data: { product_id: line.productId, variant_id: variantId, batch_id: batchId, warehouse_id: warehouseId, quantity },
           });
         }
 
         await tx.stockMovement.create({
           data: {
             product_id: line.productId,
+            variant_id: variantId,
             batch_id: batchId,
             warehouse_id: warehouseId,
             movement_type: 'STOCK_IN',
@@ -148,6 +157,7 @@ class PurchasesService {
         await tx.costLot.create({
           data: {
             product_id: line.productId,
+            variant_id: variantId,
             batch_id: batchId,
             warehouse_id: warehouseId,
             purchase_order_id: po.id,

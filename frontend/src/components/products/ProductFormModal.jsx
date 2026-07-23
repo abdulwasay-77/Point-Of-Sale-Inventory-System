@@ -5,6 +5,7 @@ import { categoryService } from '../../services/categoryService'
 import { productService } from '../../services/productService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import { usePermissions } from '../../hooks/usePermissions'
+import VariantManager from './VariantManager'
 
 /**
  * Create/Edit form for a single product. Builds a FormData payload (so the
@@ -52,6 +53,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     coveragePerBox: '',
     conversionFactor: '',
     isBatchTracked: false,
+    isVariantTracked: false,
+    length: '',
+    width: '',
+    dimensionUnit: 'ft',
   })
   const [imagePreview, setImagePreview] = useState(null)
   const [imageFile, setImageFile] = useState(null)
@@ -92,6 +97,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
         coveragePerBox: initialValues?.coveragePerBox ?? '',
         conversionFactor: initialValues?.conversionFactor ?? '',
         isBatchTracked: initialValues?.isBatchTracked || false,
+        isVariantTracked: initialValues?.isVariantTracked || false,
+        length: initialValues?.length ?? '',
+        width: initialValues?.width ?? '',
+        dimensionUnit: initialValues?.dimensionUnit || 'ft',
       })
       setImagePreview(initialValues?.image ? toImageUrl(initialValues.image) : null)
       setImageFile(null)
@@ -217,6 +226,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     if (form.coveragePerBox !== '') formData.append('coverage_per_box', form.coveragePerBox)
     if (form.conversionFactor !== '') formData.append('conversion_factor', form.conversionFactor)
     formData.append('is_batch_tracked', form.isBatchTracked ? 'true' : 'false')
+    formData.append('is_variant_tracked', form.isVariantTracked ? 'true' : 'false')
+    if (form.length !== '') formData.append('length', form.length)
+    if (form.width !== '') formData.append('width', form.width)
+    if (form.length !== '' || form.width !== '') formData.append('dimension_unit', form.dimensionUnit)
     formData.append('stock', form.stock)
     if (imageFile) formData.append('image', imageFile)
 
@@ -517,6 +530,70 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               Batch/lot tracked (e.g. tiles — shade varies by lot)
             </label>
           </div>
+
+          <div className="flex items-end pb-2.5">
+            <label className="flex items-center gap-2.5 text-sm text-ink cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.isVariantTracked}
+                onChange={(e) => handleChange('isVariantTracked', e.target.checked)}
+                className="rounded border-line text-amber focus:ring-amber"
+              />
+              Comes in colors (e.g. paint, fittings — customer picks a color)
+            </label>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="label-text">
+              Dimensions <span className="text-ink-muted font-normal">(optional — leave blank if size doesn't apply)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className="input-field figure flex-1"
+                value={form.length}
+                onChange={(e) => handleChange('length', e.target.value)}
+                placeholder="Length"
+                aria-label="Length"
+              />
+              <span className="self-center text-ink-muted text-sm">×</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className="input-field figure flex-1"
+                value={form.width}
+                onChange={(e) => handleChange('width', e.target.value)}
+                placeholder="Width"
+                aria-label="Width"
+              />
+              <select
+                className="input-field w-24 shrink-0"
+                value={form.dimensionUnit}
+                onChange={(e) => handleChange('dimensionUnit', e.target.value)}
+                aria-label="Dimension unit"
+              >
+                <option value="ft">ft</option>
+                <option value="m">m</option>
+                <option value="in">in</option>
+                <option value="cm">cm</option>
+              </select>
+            </div>
+          </div>
+
+          {form.isVariantTracked && (
+            <div className="sm:col-span-2">
+              {initialValues?.id ? (
+                <VariantManager productId={initialValues.id} />
+              ) : (
+                <p className="text-xs text-ink-muted bg-paper-dim rounded-lg px-3 py-2.5">
+                  Save this product first, then reopen it to add color options — each color needs its own stock record.
+                </p>
+              )}
+            </div>
+          )}
 
           {form.baseUom === 'BOX' && (
             <div className="sm:col-span-2">

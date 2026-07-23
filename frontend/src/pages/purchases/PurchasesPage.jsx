@@ -262,14 +262,26 @@ export default function PurchasesPage() {
 function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, warehouses }) {
   const [supplierId, setSupplierId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
-  const [lines, setLines] = useState([{ productId: '', quantity: 1, costPrice: '', batchNumber: '', shadeCode: '' }])
+  const [lines, setLines] = useState([{ productId: '', quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
+  const [variantsByProduct, setVariantsByProduct] = useState({})
+
+  function ensureVariantsLoaded(productId) {
+    const product = products.find((p) => p.id === productId)
+    if (!product?.isVariantTracked || variantsByProduct[productId]) return
+    productService.getVariants(productId).then((res) => {
+      setVariantsByProduct((prev) => ({ ...prev, [productId]: res.data.data }))
+    })
+  }
 
   useEffect(() => {
     if (isOpen) {
       setSupplierId(suppliers[0]?.id || '')
       setWarehouseId(warehouses[0]?.id || '')
-      setLines([{ productId: products[0]?.id || '', quantity: 1, costPrice: '', batchNumber: '', shadeCode: '' }])
+      const firstProductId = products[0]?.id || ''
+      setLines([{ productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
+      if (firstProductId) ensureVariantsLoaded(firstProductId)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, suppliers, products, warehouses])
 
   const total = useMemo(
@@ -282,7 +294,9 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
   }
 
   function addLine() {
-    setLines((prev) => [...prev, { productId: products[0]?.id || '', quantity: 1, costPrice: '', batchNumber: '', shadeCode: '' }])
+    const firstProductId = products[0]?.id || ''
+    if (firstProductId) ensureVariantsLoaded(firstProductId)
+    setLines((prev) => [...prev, { productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
   }
 
   function removeLine(index) {
@@ -301,16 +315,19 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
         productId: l.productId,
         quantity: Number(l.quantity),
         costPrice: Number(l.costPrice),
+        variantId: l.variantId || undefined,
         batchNumber: l.batchNumber?.trim() || undefined,
         shadeCode: l.shadeCode?.trim() || undefined,
       }))
 
     if (!items.length || !supplierId) return
-    // Batch-tracked products require a batch number — block submit and let
-    // the per-line required input handle the messaging.
+    // Batch-tracked products require a batch number, variant-tracked
+    // products require a color — block submit and let the per-line
+    // required input handle the messaging.
     for (const item of items) {
       const product = productFor(item.productId)
       if (product?.isBatchTracked && !item.batchNumber) return
+      if (product?.isVariantTracked && !item.variantId) return
     }
 
     onSave({ supplierId, warehouseId: warehouseId || undefined, items })
@@ -371,11 +388,16 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
                     <select
                       className="input-field col-span-6"
                       value={line.productId}
-                      onChange={(e) => updateLine(index, 'productId', e.target.value)}
+                      onChange={(e) => {
+                        updateLine(index, 'productId', e.target.value)
+                        updateLine(index, 'variantId', '')
+                        ensureVariantsLoaded(e.target.value)
+                      }}
                     >
                       {products.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name}
+                          {p.isVariantTracked ? ' (colors)' : ''}
                           {p.isBatchTracked ? ' (batch tracked)' : ''}
                         </option>
                       ))}
@@ -407,6 +429,24 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
                       <Icon name="trash" className="h-4 w-4" />
                     </button>
                   </div>
+
+                  {product?.isVariantTracked && (
+                    <div className="pl-1">
+                      <select
+                        className="input-field figure text-sm"
+                        value={line.variantId}
+                        onChange={(e) => updateLine(index, 'variantId', e.target.value)}
+                        required
+                      >
+                        <option value="">Select a color (required)</option>
+                        {(variantsByProduct[line.productId] || []).map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {product?.isBatchTracked && (
                     <div className="grid grid-cols-2 gap-2 pl-1">

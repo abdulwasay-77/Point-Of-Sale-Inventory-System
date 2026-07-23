@@ -113,6 +113,10 @@ class ProductsService {
         coverage_per_box: data.coverage_per_box !== undefined && data.coverage_per_box !== '' ? Number(data.coverage_per_box) : null,
         conversion_factor: data.conversion_factor !== undefined && data.conversion_factor !== '' ? Number(data.conversion_factor) : null,
         is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
+        is_variant_tracked: data.is_variant_tracked === true || data.is_variant_tracked === 'true',
+        length: data.length !== undefined && data.length !== '' ? Number(data.length) : null,
+        width: data.width !== undefined && data.width !== '' ? Number(data.width) : null,
+        dimension_unit: data.dimension_unit || null,
         retail_price: Number(data.price ?? data.retail_price ?? 0),
         wholesale_price: Number(data.wholesale_price ?? data.price ?? 0),
         cost_price: costPrice,
@@ -203,6 +207,12 @@ class ProductsService {
         ...(data.is_batch_tracked !== undefined && {
           is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
         }),
+        ...(data.is_variant_tracked !== undefined && {
+          is_variant_tracked: data.is_variant_tracked === true || data.is_variant_tracked === 'true',
+        }),
+        ...(data.length !== undefined && { length: data.length === '' ? null : Number(data.length) }),
+        ...(data.width !== undefined && { width: data.width === '' ? null : Number(data.width) }),
+        ...(data.dimension_unit !== undefined && { dimension_unit: data.dimension_unit || null }),
         ...(imageFile && { image_url: `/uploads/products/${imageFile.filename}` }),
       },
     });
@@ -305,21 +315,155 @@ class ProductsService {
     return this.getById(id);
   }
 
-  async getBatches(productId) {
+  /**
+   * Available batches, optionally scoped to one variant (color). When a
+   * product is both batch- and variant-tracked, the POS flow is: pick a
+   * variant first, then call this with that variantId to list only the
+   * batches belonging to that color — not every batch of every color.
+   */
+  async getBatches(productId, variantId = null) {
     const batches = await prisma.batch.findMany({
-      where: { product_id: productId },
+      where: { product_id: productId, ...(variantId !== null && { variant_id: variantId }) },
       include: { stock_levels: true },
       orderBy: { received_date: 'asc' },
     });
     return batches
       .map((b) => ({
         id: b.id,
+        variantId: b.variant_id,
         batchNumber: b.batch_number,
         shadeCode: b.shade_code,
         receivedDate: b.received_date,
         stock: b.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0),
       }))
       .filter((b) => b.stock > 0);
+  }
+
+  /**
+   * Color/shade variants for a product — a deliberate customer choice
+   * (e.g. red vs blue), not the same thing as a Batch (incidental
+   * manufacturing lot variation the customer never chooses between). See
+   * the ProductVariant model comment in schema.prisma for the full
+   * distinction. Only relevant for products with is_variant_tracked=true,
+   * but this works regardless of that flag — the flag just controls
+   * whether the frontend shows variant selection at all.
+   */
+  async getVariants(productId) {
+    const variants = await prisma.productVariant.findMany({
+      where: { product_id: productId, is_active: true },
+      include: { stock_levels: true },
+      orderBy: { variant_name: 'asc' },
+    });
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    return variants.map((v) => this.variantToDTO(v, product));
+  }
+
+  async createVariant(productId, data) {
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      const err = new Error('Product not found');
+      err.status = 404;
+      throw err;
+    }
+    const warehouseId = await getDefaultWarehouseId();
+    const initialStock = Number(data.stock ?? 0);
+    // A variant's own cost, if given, otherwise it starts from the
+    // product's base cost — either way, this only seeds the opening cost
+    // lot; ongoing cost differences by color come from purchases scoped
+    // to this variant, same as batch costing.
+    const costPrice = data.cost_price !== undefined && data.cost_price !== '' ? Number(data.cost_price) : Number(product.cost_price);
+
+    const variant = await prisma.productVariant.create({
+      data: {
+        product_id: productId,
+        variant_name: data.variantName || data.variant_name,
+        sku: data.sku,
+        price_adjustment: Number(data.priceAdjustment ?? data.price_adjustment ?? 0),
+      },
+    });
+
+    if (initialStock > 0) {
+      await prisma.stockLevel.create({
+        data: { product_id: productId, variant_id: variant.id, warehouse_id: warehouseId, quantity: initialStock },
+      });
+      await prisma.stockMovement.create({
+        data: {
+          product_id: productId,
+          variant_id: variant.id,
+          warehouse_id: warehouseId,
+          movement_type: 'STOCK_IN',
+          quantity: initialStock,
+          reference_note: `Initial stock for variant "${variant.variant_name}"`,
+          created_by: data.created_by,
+        },
+      });
+      await prisma.costLot.create({
+        data: {
+          product_id: productId,
+          variant_id: variant.id,
+          warehouse_id: warehouseId,
+          unit_cost: costPrice,
+          quantity_received: initialStock,
+          quantity_remaining: initialStock,
+        },
+      });
+    }
+
+    const refreshedProduct = await prisma.product.findUnique({ where: { id: productId } });
+    return this.variantToDTO(variant, refreshedProduct);
+  }
+
+  async updateVariant(variantId, data) {
+    const existing = await prisma.productVariant.findUnique({ where: { id: variantId } });
+    if (!existing) {
+      const err = new Error('Variant not found');
+      err.status = 404;
+      throw err;
+    }
+    const updated = await prisma.productVariant.update({
+      where: { id: variantId },
+      data: {
+        ...((data.variantName !== undefined || data.variant_name !== undefined) && {
+          variant_name: data.variantName ?? data.variant_name,
+        }),
+        ...(data.sku !== undefined && { sku: data.sku }),
+        ...((data.priceAdjustment !== undefined || data.price_adjustment !== undefined) && {
+          price_adjustment: Number(data.priceAdjustment ?? data.price_adjustment),
+        }),
+      },
+      include: { stock_levels: true },
+    });
+    const product = await prisma.product.findUnique({ where: { id: existing.product_id } });
+    return this.variantToDTO(updated, product);
+  }
+
+  /** Soft-deletes (deactivates) a variant if it has sales history, same
+   *  pattern as remove() for a whole product — otherwise hard-deletes. */
+  async removeVariant(variantId) {
+    const usageCount = await prisma.invoiceItem.count({ where: { variant_id: variantId } });
+    if (usageCount > 0) {
+      await prisma.productVariant.update({ where: { id: variantId }, data: { is_active: false } });
+      return;
+    }
+    await prisma.productVariant.delete({ where: { id: variantId } });
+  }
+
+  variantToDTO(variant, product) {
+    const stock = (variant.stock_levels || []).reduce((sum, sl) => sum + Number(sl.quantity), 0);
+    return {
+      id: variant.id,
+      productId: variant.product_id,
+      name: variant.variant_name,
+      sku: variant.sku,
+      priceAdjustment: Number(variant.price_adjustment),
+      // The actual sellable price for this specific color — base product
+      // price plus this variant's adjustment. Computed here so the
+      // frontend never has to duplicate this math.
+      price: product ? Number(product.retail_price) + Number(variant.price_adjustment) : null,
+      wholesalePrice: product ? Number(product.wholesale_price) + Number(variant.price_adjustment) : null,
+      stock,
+      isActive: variant.is_active,
+    };
   }
 
   async remove(id) {
@@ -378,6 +522,13 @@ class ProductsService {
       // FR: Batch & Lot Tracking — when true, this product must be sold
       // from a specific batch (see GET /products/:id/batches).
       isBatchTracked: product.is_batch_tracked,
+      // Color/shade variants — a deliberate customer choice, distinct from
+      // batch tracking (see GET /products/:id/variants). A product can be
+      // both variant- and batch-tracked at once.
+      isVariantTracked: product.is_variant_tracked,
+      length: product.length !== null && product.length !== undefined ? Number(product.length) : null,
+      width: product.width !== null && product.width !== undefined ? Number(product.width) : null,
+      dimensionUnit: product.dimension_unit,
     };
   }
 }

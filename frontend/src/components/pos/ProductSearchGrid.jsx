@@ -8,7 +8,7 @@ import { formatCurrency } from '../../utils/formatters'
 import { productService } from '../../services/productService'
 import { kitService } from '../../services/kitService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
-import BatchSelectorModal from './BatchSelectorModal'
+import VariantBatchSelectorModal from './VariantBatchSelectorModal'
 import AreaToBoxModal from './AreaToBoxModal'
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/api$/, '')
@@ -56,9 +56,11 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
   const [kits, setKits] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [scanFeedback, setScanFeedback] = useState(null)
-  const [batchModalProduct, setBatchModalProduct] = useState(null)
-  const [batchModalInitialQty, setBatchModalInitialQty] = useState(1)
+  const [pickerProduct, setPickerProduct] = useState(null)
+  const [pickerInitialQty, setPickerInitialQty] = useState(1)
   const [areaModalProduct, setAreaModalProduct] = useState(null)
+
+  const needsPicker = (product) => product.isBatchTracked || product.isVariantTracked
 
   useEffect(() => {
     Promise.all([productService.getAll(), kitService.getAll()])
@@ -70,9 +72,9 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
   }, [])
 
   function handleProductClick(product) {
-    if (product.isBatchTracked) {
-      setBatchModalInitialQty(1)
-      setBatchModalProduct(product)
+    if (needsPicker(product)) {
+      setPickerInitialQty(1)
+      setPickerProduct(product)
     } else {
       onAddProduct(product)
     }
@@ -83,10 +85,10 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
       try {
         const res = await productService.lookupByCode(code)
         const product = res.data.data
-        if (product.isBatchTracked) {
-          setBatchModalInitialQty(1)
-          setBatchModalProduct(product)
-          setScanFeedback({ ok: true, text: `"${product.name}" scanned — pick a batch` })
+        if (needsPicker(product)) {
+          setPickerInitialQty(1)
+          setPickerProduct(product)
+          setScanFeedback({ ok: true, text: `"${product.name}" scanned — pick an option` })
         } else {
           onAddProduct(product)
           setScanFeedback({ ok: true, text: `Added "${product.name}" from scan` })
@@ -211,8 +213,11 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
                             className="h-6 w-6 text-ink-muted transition-transform duration-300 group-hover:scale-110"
                           />
                         )}
-                        {product.isBatchTracked && (
-                          <span className="absolute top-1 right-1 badge-amber text-[10px] px-1.5 py-0.5">Batch</span>
+                        {(product.isBatchTracked || product.isVariantTracked) && (
+                          <span className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                            {product.isVariantTracked && <span className="badge-amber text-[10px] px-1.5 py-0.5">Colors</span>}
+                            {product.isBatchTracked && <span className="badge-amber text-[10px] px-1.5 py-0.5">Batch</span>}
+                          </span>
                         )}
                       </div>
                       <p className="text-sm font-medium text-ink leading-tight line-clamp-2">{product.name}</p>
@@ -272,18 +277,22 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
         )}
       </div>
 
-      <BatchSelectorModal
-        isOpen={Boolean(batchModalProduct)}
-        onClose={() => setBatchModalProduct(null)}
-        product={batchModalProduct}
-        initialQuantity={batchModalInitialQty}
-        onSelect={(batch, quantity) => {
-          onAddProduct(batchModalProduct, {
+      <VariantBatchSelectorModal
+        isOpen={Boolean(pickerProduct)}
+        onClose={() => setPickerProduct(null)}
+        product={pickerProduct}
+        initialQuantity={pickerInitialQty}
+        onSelect={({ variant, batch }, quantity) => {
+          onAddProduct(pickerProduct, {
             quantity,
-            batchId: batch.id,
-            batchLabel: `${batch.batchNumber}${batch.shadeCode ? ` · ${batch.shadeCode}` : ''}`,
+            variantId: variant?.id || null,
+            variantLabel: variant?.name || null,
+            variantPriceAdjustment: variant?.priceAdjustment || 0,
+            variantStock: variant?.stock ?? null,
+            batchId: batch?.id || null,
+            batchLabel: batch ? `${batch.batchNumber}${batch.shadeCode ? ` · ${batch.shadeCode}` : ''}` : null,
           })
-          setBatchModalProduct(null)
+          setPickerProduct(null)
         }}
       />
 
@@ -292,13 +301,14 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
         onClose={() => setAreaModalProduct(null)}
         product={areaModalProduct}
         onConfirm={(boxes) => {
-          if (areaModalProduct.isBatchTracked) {
-            // Batch-tracked product: the area calculator only computes the
-            // quantity. Hand off to the batch picker with that quantity
-            // pre-filled so the cart line ends up with both a quantity AND
-            // a batchId — otherwise checkout will reject the line.
-            setBatchModalInitialQty(boxes)
-            setBatchModalProduct(areaModalProduct)
+          if (areaModalProduct && needsPicker(areaModalProduct)) {
+            // Batch- and/or variant-tracked product: the area calculator
+            // only computes the quantity. Hand off to the picker with that
+            // quantity pre-filled so the cart line ends up with a
+            // quantity AND whichever of batchId/variantId this product
+            // requires — otherwise checkout will reject the line.
+            setPickerInitialQty(boxes)
+            setPickerProduct(areaModalProduct)
           } else {
             onAddProduct(areaModalProduct, { quantity: boxes })
           }

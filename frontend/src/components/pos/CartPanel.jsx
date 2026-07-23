@@ -135,6 +135,7 @@ export default function CartPanel({
                       </p>
                       <p className="text-xs text-ink-muted figure">
                         {item.sku}
+                        {item.variantLabel && <span className="ml-1.5 text-ink-muted">· {item.variantLabel}</span>}
                         {item.batchLabel && <span className="ml-1.5 text-ink-muted">· {item.batchLabel}</span>}
                       </p>
                     </div>

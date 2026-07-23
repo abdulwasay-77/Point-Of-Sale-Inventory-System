@@ -38,40 +38,57 @@ export function CartProvider({ children }) {
   const [items, setItems] = useState([])
   const [customer, setCustomer] = useState(null)
 
-  const lineIdFor = (kind, id, batchId) => (kind === 'kit' ? `kit:${id}` : `product:${id}:${batchId || 'none'}`)
+  const lineIdFor = (kind, id, variantId, batchId) =>
+    kind === 'kit' ? `kit:${id}` : `product:${id}:${variantId || 'none'}:${batchId || 'none'}`
 
   /** Adds a regular product line. `quantity` lets the Area-to-Box
    *  calculator add a computed box count in one shot instead of clicking
    *  "+1" repeatedly. `batchId`/`batchLabel` come from the batch picker
-   *  for batch-tracked products. */
-  const addProductItem = useCallback((product, { quantity = 1, batchId = null, batchLabel = null } = {}) => {
-    const lineId = lineIdFor('product', product.id, batchId)
-    setItems((prev) => {
-      const existing = prev.find((item) => item.lineId === lineId)
-      if (existing) {
-        const nextQty = Math.min(existing.quantity + quantity, product.stock)
-        return prev.map((item) => (item.lineId === lineId ? { ...item, quantity: nextQty } : item))
-      }
-      return [
-        ...prev,
-        {
-          lineId,
-          kind: 'product',
-          productId: product.id,
-          batchId,
-          batchLabel,
-          name: product.name,
-          sku: product.sku,
-          price: product.price,
-          gstRate: Number(product.gstRate) || 0,
-          discountType: product.discountType || 'PERCENTAGE',
-          discountValue: Number(product.discountValue) || 0,
-          stock: product.stock,
-          quantity: Math.min(quantity, product.stock),
-        },
-      ]
-    })
-  }, [])
+   *  for batch-tracked products. `variantId`/`variantLabel`/
+   *  `variantPriceAdjustment`/`variantStock` come from the color picker
+   *  for variant-tracked products — a product can be both at once (see
+   *  VariantBatchSelectorModal), in which case a cart line is unique per
+   *  color+batch combination, not just per product. */
+  const addProductItem = useCallback(
+    (
+      product,
+      { quantity = 1, variantId = null, variantLabel = null, variantPriceAdjustment = 0, variantStock = null, batchId = null, batchLabel = null } = {},
+    ) => {
+      const lineId = lineIdFor('product', product.id, variantId, batchId)
+      // A variant (color) can have its own stock cap tighter than the
+      // product's overall stock; fall back to the product's stock when no
+      // variant is involved.
+      const stockCap = variantStock !== null ? variantStock : product.stock
+      setItems((prev) => {
+        const existing = prev.find((item) => item.lineId === lineId)
+        if (existing) {
+          const nextQty = Math.min(existing.quantity + quantity, stockCap)
+          return prev.map((item) => (item.lineId === lineId ? { ...item, quantity: nextQty } : item))
+        }
+        return [
+          ...prev,
+          {
+            lineId,
+            kind: 'product',
+            productId: product.id,
+            variantId,
+            variantLabel,
+            batchId,
+            batchLabel,
+            name: product.name,
+            sku: product.sku,
+            price: product.price + Number(variantPriceAdjustment || 0),
+            gstRate: Number(product.gstRate) || 0,
+            discountType: product.discountType || 'PERCENTAGE',
+            discountValue: Number(product.discountValue) || 0,
+            stock: stockCap,
+            quantity: Math.min(quantity, stockCap),
+          },
+        ]
+      })
+    },
+    [],
+  )
 
   /** Adds a kit (bundle) line — priced and sold as one unit, backend
    *  deducts each component product from stock. Kit lines are
@@ -173,6 +190,7 @@ export function CartProvider({ children }) {
           ? { kitId: item.kitId, quantity: item.quantity }
           : {
               productId: item.productId,
+              variantId: item.variantId || undefined,
               batchId: item.batchId || undefined,
               quantity: item.quantity,
               discountType: item.discountType,

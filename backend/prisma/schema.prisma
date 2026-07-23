@@ -194,6 +194,17 @@ model Product {
   // changes the product's cost; never auto-applied (see purchases.service.js).
   target_margin_pct Decimal?  @map("target_margin_pct")
   is_batch_tracked  Boolean   @map("is_batch_tracked") @default(false)
+  // Independent of is_batch_tracked — a product can be both, neither, or
+  // just one. When true, this product is sold by color/shade variant
+  // (see ProductVariant below) — a deliberate choice the customer makes
+  // (e.g. "red" vs "blue"), as opposed to batch tracking, which exists
+  // for *incidental* manufacturing lot variation, not customer choice.
+  is_variant_tracked Boolean  @map("is_variant_tracked") @default(false)
+  // Optional physical dimensions (e.g. a 2ft x 1ft panel). Left null for
+  // any product where size isn't a meaningful attribute.
+  length            Decimal?  @map("length")
+  width             Decimal?  @map("width")
+  dimension_unit    String?   @map("dimension_unit")
   reorder_threshold Int       @map("reorder_threshold") @default(5)
   image_url         String?   @map("image_url")
   barcode           String?   @unique
@@ -215,16 +226,36 @@ model Product {
   @@map("products")
 }
 
+// A deliberate product option the customer chooses (e.g. a car's color) —
+// NOT the same concept as Batch, which tracks incidental lot-to-lot
+// variation the customer never chooses between. A product can be
+// variant-tracked, batch-tracked, both, or neither (see
+// Product.is_variant_tracked / is_batch_tracked). When both are on for
+// the same product, a Batch is scoped to one specific variant (see
+// Batch.variant_id below) — e.g. "Red, Batch B2" — so cost and stock are
+// accurate down to the combination of color AND manufacturing lot.
 model ProductVariant {
   id                String    @id @default(uuid())
   product_id        String    @map("product_id")
   variant_name      String    @map("variant_name")
   sku               String    @unique
-  price_adjustment  Decimal?  @map("price_adjustment")
+  // Added to the product's retail_price/wholesale_price when this variant
+  // is sold (e.g. +200 for a premium color). Cost is NOT stored here —
+  // unlike selling price, cost naturally varies by what was actually
+  // purchased, so it lives in CostLot (scoped by variant_id) exactly like
+  // batch costing already works, rather than a single static number here.
+  price_adjustment  Decimal   @map("price_adjustment") @default(0)
+  is_active         Boolean   @default(true)
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
 
-  product           Product   @relation(fields: [product_id], references: [id])
+  product           Product        @relation(fields: [product_id], references: [id])
+  stock_levels      StockLevel[]
+  stock_movements   StockMovement[]
+  batches           Batch[]
+  cost_lots         CostLot[]
+  invoice_items     InvoiceItem[]
+  transfers         StockTransfer[]
 
   @@unique([product_id, variant_name])
   @@map("product_variants")
@@ -288,18 +319,31 @@ model Warehouse {
 model Batch {
   id            String    @id @default(uuid())
   product_id    String    @map("product_id")
+  // Set only when the product is also variant-tracked (a color) — this
+  // batch belongs to that specific color, not the product as a whole.
+  // Null for products that are batch-tracked but not variant-tracked.
+  variant_id    String?   @map("variant_id")
   batch_number  String    @map("batch_number")
   shade_code    String?   @map("shade_code")
   received_date DateTime  @map("received_date")
   created_at    DateTime  @default(now())
 
-  product       Product   @relation(fields: [product_id], references: [id])
+  product       Product         @relation(fields: [product_id], references: [id])
+  variant       ProductVariant? @relation(fields: [variant_id], references: [id])
   stock_levels  StockLevel[]
   stock_movements StockMovement[]
   invoice_items  InvoiceItem[]
   transfers      StockTransfer[]
   cost_lots      CostLot[]
 
+  // Deliberately NOT [product_id, variant_id, batch_number]: Postgres
+  // treats every NULL as distinct in a unique index, so a compound key
+  // including the nullable variant_id would silently stop enforcing
+  // uniqueness for ordinary (non-variant) batch-tracked products, which
+  // are the majority case. Keeping batch_number unique per product only
+  // means two different colors can't reuse the exact same batch number —
+  // acceptable, and staff can simply prefix batch numbers per color
+  // (e.g. "R-B1", "BL-B1") if that's ever a real collision.
   @@unique([product_id, batch_number])
   @@map("batches")
 }
@@ -317,6 +361,8 @@ model Batch {
 model CostLot {
   id                 String    @id @default(uuid())
   product_id         String    @map("product_id")
+  // Set when the sold item is a specific color (variant-tracked product).
+  variant_id         String?   @map("variant_id")
   batch_id           String?   @map("batch_id")
   warehouse_id       String    @map("warehouse_id")
   purchase_order_id  String?   @map("purchase_order_id")
@@ -326,32 +372,36 @@ model CostLot {
   created_at         DateTime  @default(now())
 
   product            Product        @relation(fields: [product_id], references: [id])
+  variant            ProductVariant? @relation(fields: [variant_id], references: [id])
   batch              Batch?         @relation(fields: [batch_id], references: [id])
   warehouse          Warehouse      @relation(fields: [warehouse_id], references: [id])
   purchase_order     PurchaseOrder? @relation(fields: [purchase_order_id], references: [id])
 
-  @@index([product_id, batch_id, created_at])
+  @@index([product_id, variant_id, batch_id, created_at])
   @@map("cost_lots")
 }
 
 model StockLevel {
   id           String   @id @default(uuid())
   product_id   String   @map("product_id")
+  variant_id   String?  @map("variant_id")
   batch_id     String?  @map("batch_id")
   warehouse_id String   @map("warehouse_id")
   quantity     Decimal
 
-  product      Product   @relation(fields: [product_id], references: [id])
-  batch        Batch?    @relation(fields: [batch_id], references: [id])
-  warehouse    Warehouse @relation(fields: [warehouse_id], references: [id])
+  product      Product         @relation(fields: [product_id], references: [id])
+  variant      ProductVariant? @relation(fields: [variant_id], references: [id])
+  batch        Batch?          @relation(fields: [batch_id], references: [id])
+  warehouse    Warehouse       @relation(fields: [warehouse_id], references: [id])
 
-  @@unique([product_id, batch_id, warehouse_id])
+  @@unique([product_id, variant_id, batch_id, warehouse_id])
   @@map("stock_levels")
 }
 
 model StockMovement {
   id                 String        @id @default(uuid())
   product_id         String        @map("product_id")
+  variant_id         String?       @map("variant_id")
   batch_id           String?       @map("batch_id")
   warehouse_id       String        @map("warehouse_id")
   movement_type      MovementType
@@ -363,7 +413,8 @@ model StockMovement {
   created_at         DateTime      @default(now())
   created_by         String        @map("created_by")
 
-  product            Product       @relation(fields: [product_id], references: [id])
+  product            Product        @relation(fields: [product_id], references: [id])
+  variant            ProductVariant? @relation(fields: [variant_id], references: [id])
   batch              Batch?        @relation(fields: [batch_id], references: [id])
   warehouse          Warehouse     @relation(fields: [warehouse_id], references: [id])
   invoice            Invoice?      @relation(fields: [invoice_id], references: [id])
@@ -378,6 +429,7 @@ model StockTransfer {
   source_warehouse_id      String    @map("source_warehouse_id")
   destination_warehouse_id String    @map("destination_warehouse_id")
   product_id               String    @map("product_id")
+  variant_id               String?   @map("variant_id")
   batch_id                 String?   @map("batch_id")
   quantity                 Decimal
   status                   String    @default("PENDING")
@@ -388,6 +440,7 @@ model StockTransfer {
   source_warehouse         Warehouse @relation("FromWarehouse", fields: [source_warehouse_id], references: [id])
   destination_warehouse    Warehouse @relation("ToWarehouse", fields: [destination_warehouse_id], references: [id])
   product                  Product   @relation(fields: [product_id], references: [id])
+  variant                  ProductVariant? @relation(fields: [variant_id], references: [id])
   batch                    Batch?    @relation(fields: [batch_id], references: [id])
   movements                StockMovement[]
 
@@ -478,6 +531,7 @@ model InvoiceItem {
   invoice_id  String   @map("invoice_id")
   product_id  String?  @map("product_id")
   kit_id      String?  @map("kit_id")
+  variant_id  String?  @map("variant_id")
   batch_id    String?  @map("batch_id")
   quantity    Decimal
   uom_used    UomType  @map("uom_used")
@@ -499,6 +553,7 @@ model InvoiceItem {
   invoice     Invoice  @relation(fields: [invoice_id], references: [id])
   product     Product? @relation(fields: [product_id], references: [id])
   kit         Kit?     @relation(fields: [kit_id], references: [id])
+  variant     ProductVariant? @relation(fields: [variant_id], references: [id])
   batch       Batch?   @relation(fields: [batch_id], references: [id])
 
   @@map("invoice_items")

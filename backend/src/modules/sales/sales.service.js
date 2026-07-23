@@ -18,12 +18,12 @@ const POS_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER'];
  * so checkout never fails over a costing gap — margin reporting on that
  * sliver just falls back to being approximate instead of exact.
  */
-async function consumeCostLotsFifo(tx, { productId, batchId, quantity, product }) {
+async function consumeCostLotsFifo(tx, { productId, variantId, batchId, quantity, product }) {
   let remaining = quantity;
   let totalCost = 0;
 
   const lots = await tx.costLot.findMany({
-    where: { product_id: productId, batch_id: batchId || null, quantity_remaining: { gt: 0 } },
+    where: { product_id: productId, variant_id: variantId || null, batch_id: batchId || null, quantity_remaining: { gt: 0 } },
     orderBy: { created_at: 'asc' },
   });
 
@@ -80,7 +80,7 @@ class SalesService {
 
     const invoices = await prisma.invoice.findMany({
       where,
-      include: { customer: true, created_by_user: true, items: { include: { product: true, kit: true, batch: true } } },
+      include: { customer: true, created_by_user: true, items: { include: { product: true, kit: true, variant: true, batch: true } } },
       orderBy: { created_at: 'desc' },
     });
     return invoices.map(this.toDTO);
@@ -89,7 +89,7 @@ class SalesService {
   async getById(id) {
     const invoice = await prisma.invoice.findUnique({
       where: { id },
-      include: { customer: true, created_by_user: true, items: { include: { product: true, kit: true, batch: true } } },
+      include: { customer: true, created_by_user: true, items: { include: { product: true, kit: true, variant: true, batch: true } } },
     });
     if (!invoice) {
       const err = new Error('Invoice not found');
@@ -141,6 +141,10 @@ class SalesService {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    const variantIds = productLines.map((l) => l.variantId).filter(Boolean);
+    const variants = variantIds.length > 0 ? await prisma.productVariant.findMany({ where: { id: { in: variantIds } } }) : [];
+    const variantMap = new Map(variants.map((v) => [v.id, v]));
+
     const kits = await prisma.kit.findMany({
       where: { id: { in: kitLines.map((l) => l.kitId) } },
       include: { components: { include: { component_product: true } } },
@@ -160,8 +164,20 @@ class SalesService {
         err.status = 400;
         throw err;
       }
-      const available = product.is_batch_tracked
-        ? Number((await prisma.stockLevel.findFirst({ where: { product_id: product.id, warehouse_id: warehouseId, batch_id: line.batchId } }))?.quantity || 0)
+      if (product.is_variant_tracked && !line.variantId) {
+        const err = new Error(`"${product.name}" comes in multiple colors — please select one`);
+        err.status = 400;
+        throw err;
+      }
+      const available = product.is_batch_tracked || product.is_variant_tracked
+        ? Number((await prisma.stockLevel.findFirst({
+            where: {
+              product_id: product.id,
+              warehouse_id: warehouseId,
+              variant_id: line.variantId || null,
+              batch_id: line.batchId || null,
+            },
+          }))?.quantity || 0)
         : product.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0);
       if (available < Number(line.quantity)) {
         const err = new Error(`Insufficient stock for ${product.name}. Available: ${available}`);
@@ -207,8 +223,13 @@ class SalesService {
 
     const productLineData = productLines.map((line) => {
       const product = productMap.get(line.productId);
+      const variant = line.variantId ? variantMap.get(line.variantId) : null;
       const quantity = Number(line.quantity);
-      const unitPrice = useWholesalePricing ? Number(product.wholesale_price) : Number(product.retail_price);
+      const baseUnitPrice = useWholesalePricing ? Number(product.wholesale_price) : Number(product.retail_price);
+      // A variant (color) can cost more or less than the base product —
+      // e.g. a premium color adds +200. Applied on top of retail/
+      // wholesale, same adjustment either way.
+      const unitPrice = baseUnitPrice + (variant ? Number(variant.price_adjustment) : 0);
       const grossLineTotal = quantity * unitPrice;
       const { discountType, discountValue, discountAmount } = resolveLineDiscount({
         grossLineTotal,
@@ -232,6 +253,7 @@ class SalesService {
         discountType,
         discountValue,
         discountAmount,
+        variantId: line.variantId || null,
         batchId: line.batchId || null,
       };
     });
@@ -294,6 +316,7 @@ class SalesService {
       for (const line of productLineData) {
         const cogsAmount = await consumeCostLotsFifo(tx, {
           productId: line.product.id,
+          variantId: line.variantId,
           batchId: line.batchId,
           quantity: line.quantity,
           product: line.product,
@@ -303,6 +326,7 @@ class SalesService {
           data: {
             invoice_id: created.id,
             product_id: line.product.id,
+            variant_id: line.variantId,
             batch_id: line.batchId,
             quantity: line.quantity,
             uom_used: line.product.base_uom,
@@ -315,8 +339,10 @@ class SalesService {
           },
         });
 
-        const level = line.batchId
-          ? await tx.stockLevel.findFirst({ where: { product_id: line.product.id, warehouse_id: warehouseId, batch_id: line.batchId } })
+        const level = line.variantId || line.batchId
+          ? await tx.stockLevel.findFirst({
+              where: { product_id: line.product.id, warehouse_id: warehouseId, variant_id: line.variantId || null, batch_id: line.batchId || null },
+            })
           : await tx.stockLevel.findFirst({ where: { product_id: line.product.id, warehouse_id: warehouseId }, orderBy: { quantity: 'desc' } });
 
         await tx.stockLevel.update({ where: { id: level.id }, data: { quantity: { decrement: line.quantity } } });
@@ -324,6 +350,7 @@ class SalesService {
         await tx.stockMovement.create({
           data: {
             product_id: line.product.id,
+            variant_id: line.variantId,
             batch_id: line.batchId,
             warehouse_id: warehouseId,
             movement_type: 'SALE',
@@ -419,6 +446,7 @@ class SalesService {
         productId: item.product_id,
         kitId: item.kit_id,
         product: item.product?.name || item.kit?.name || 'Item',
+        variant: item.variant?.variant_name || null,
         batch: item.batch ? `${item.batch.batch_number}${item.batch.shade_code ? ` (${item.batch.shade_code})` : ''}` : null,
         quantity: Number(item.quantity),
         price: Number(item.unit_price),

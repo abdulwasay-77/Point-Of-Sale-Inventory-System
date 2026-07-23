@@ -1,3 +1,4 @@
+
 const ProductsService = require('./products.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const { success, created } = require('../../utils/apiResponse');
@@ -29,7 +30,7 @@ class ProductsController {
   });
 
   getBatches = asyncHandler(async (req, res) => {
-    const batches = await ProductsService.getBatches(req.params.id);
+    const batches = await ProductsService.getBatches(req.params.id, req.query.variantId || null);
     success(res, batches);
   });
 
@@ -38,6 +39,35 @@ class ProductsController {
   generateBarcode = asyncHandler(async (req, res) => {
     const product = await ProductsService.generateBarcode(req.params.id);
     success(res, product, 'Barcode generated');
+  });
+
+  getVariants = asyncHandler(async (req, res) => {
+    const variants = await ProductsService.getVariants(req.params.id);
+    success(res, variants);
+  });
+
+  createVariant = asyncHandler(async (req, res) => {
+    if (!req.body.variantName && !req.body.variant_name) {
+      return res.status(400).json({ success: false, message: 'Variant name is required' });
+    }
+    if (!req.body.sku) {
+      return res.status(400).json({ success: false, message: 'Variant SKU is required' });
+    }
+    const variant = await ProductsService.createVariant(req.params.id, {
+      ...req.body,
+      created_by: req.user?.userId,
+    });
+    created(res, variant, 'Variant created');
+  });
+
+  updateVariant = asyncHandler(async (req, res) => {
+    const variant = await ProductsService.updateVariant(req.params.variantId, req.body);
+    success(res, variant, 'Variant updated');
+  });
+
+  removeVariant = asyncHandler(async (req, res) => {
+    await ProductsService.removeVariant(req.params.variantId);
+    success(res, null, 'Variant removed');
   });
 
   create = asyncHandler(async (req, res) => {
