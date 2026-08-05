@@ -42,6 +42,11 @@ function toPaymentDTO(payment, invoiceNumber, index) {
     invoiceId: payment.invoice_id,
     invoiceNumber,
     amount: Number(payment.amount),
+    // Change handed back when this payment was tendered for more than
+    // was actually due (see CreditService#recordPayment) — 0 for a
+    // normal payment. `amount` above is always net of this, so
+    // amount + changeDue is what the customer actually handed over.
+    changeDue: payment.change_due !== null && payment.change_due !== undefined ? Number(payment.change_due) : 0,
     method: payment.method,
     paymentDate: payment.payment_date,
     referenceNo: payment.reference_no,

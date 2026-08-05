@@ -182,20 +182,30 @@ class CreditService {
       throw err;
     }
     const currentDue = Number(invoice.balance_due);
-    if (paymentAmount > currentDue) {
-      const err = new Error(`Payment (${paymentAmount.toFixed(2)}) exceeds the outstanding balance (${currentDue.toFixed(2)}).`);
+    if (currentDue <= 0) {
+      const err = new Error('This invoice has no outstanding balance.');
       err.status = 400;
       throw err;
     }
 
-    const newBalance = Math.round((currentDue - paymentAmount) * 100) / 100;
+    // Real-world payments almost never land on the exact due amount — a
+    // customer clearing a 2477 due amount with a 3000 note expects 523
+    // back as change, same as an overpayment at checkout (see
+    // sales.service.js#checkout / Invoice.change_due). So instead of
+    // rejecting anything over the due amount, only the portion up to what's
+    // actually owed is applied to the balance; anything beyond that is
+    // change handed back, tracked on the payment for the receipt, and
+    // never touches the invoice or the customer's ledger balance.
+    const appliedAmount = Math.min(paymentAmount, currentDue);
+    const changeDue = Math.round((paymentAmount - appliedAmount) * 100) / 100;
+    const newBalance = Math.round((currentDue - appliedAmount) * 100) / 100;
 
     const newPaymentId = await prisma.$transaction(async (tx) => {
       await tx.invoice.update({
         where: { id: invoiceId },
         data: {
           balance_due: newBalance,
-          amount_paid: { increment: paymentAmount },
+          amount_paid: { increment: appliedAmount },
           ...(newBalance === 0 && { due_date: null }),
         },
       });
@@ -203,7 +213,8 @@ class CreditService {
         data: {
           invoice_id: invoiceId,
           customer_id: invoice.customer_id,
-          amount: paymentAmount,
+          amount: appliedAmount,
+          change_due: changeDue,
           method: method || 'CASH',
           reference_no: referenceNo || null,
           balance_after: newBalance,
@@ -213,9 +224,12 @@ class CreditService {
       await writeLedgerEntry(tx, {
         customerId: invoice.customer_id,
         entryType: 'PAYMENT',
-        amount: -paymentAmount,
+        amount: -appliedAmount,
         invoiceId,
-        description: `Payment received against ${invoice.invoice_number}`,
+        description:
+          changeDue > 0
+            ? `Payment received against ${invoice.invoice_number} (${paymentAmount.toFixed(2)} tendered, ${changeDue.toFixed(2)} change given)`
+            : `Payment received against ${invoice.invoice_number}`,
         createdBy: userId,
       });
       return payment.id;

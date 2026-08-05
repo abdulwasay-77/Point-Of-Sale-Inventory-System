@@ -945,6 +945,15 @@ model Payment {
   // recorded before this field existed unless backfilled — see migration
   // 20260729120000_payment_balance_after.
   balance_after Decimal?     @map("balance_after")
+  // How much of `amount` was actually change handed back rather than
+  // applied to the invoice's balance — set when a credit payment (see
+  // CreditService#recordPayment) is tendered for more than what's still
+  // due, mirroring Invoice.change_due at checkout. `amount` above is
+  // always the portion actually applied to the balance, so
+  // balance_after = balance_before - amount still holds regardless of
+  // this field. 0 for every payment that didn't overpay, and for
+  // installment payments (which are pre-agreed exact amounts).
+  change_due  Decimal        @default(0) @map("change_due")
   created_by  String         @map("created_by")
 
   invoice     Invoice?       @relation(fields: [invoice_id], references: [id])

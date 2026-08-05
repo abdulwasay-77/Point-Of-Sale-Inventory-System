@@ -134,6 +134,10 @@ export function downloadPaymentReceiptPdf(payment, invoice, companyName = 'Ledge
   const state = { y: MARGIN_MM }
   const { center, row, dashedLine } = makeHelpers(doc, state)
   const balanceBefore = payment.balanceAfter !== null ? payment.balanceAfter + payment.amount : null
+  // payment.amount is always net of change (see backend/src/utils/invoiceDto.js),
+  // so what the customer actually handed over is amount + changeDue.
+  const changeDue = payment.changeDue || 0
+  const amountTendered = payment.amount + changeDue
 
   center(companyName, 12, true)
   center('Payment Receipt', 8)
@@ -148,7 +152,13 @@ export function downloadPaymentReceiptPdf(payment, invoice, companyName = 'Ledge
   if (payment.referenceNo) row('Reference #', payment.referenceNo)
 
   dashedLine()
-  row('Amount Received', formatCurrency(payment.amount), 10, true)
+  if (changeDue > 0) {
+    row('Amount Tendered', formatCurrency(amountTendered), 10, true)
+    row('Applied to Balance', formatCurrency(payment.amount), 7)
+    row('Change Given', formatCurrency(changeDue), 7)
+  } else {
+    row('Amount Received', formatCurrency(payment.amount), 10, true)
+  }
 
   state.y += 1
   row('Payment Method', PAYMENT_METHOD_LABELS[payment.method] || payment.method, 7)

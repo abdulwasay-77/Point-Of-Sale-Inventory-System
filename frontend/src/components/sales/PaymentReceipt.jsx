@@ -27,6 +27,10 @@ const PAYMENT_METHOD_LABELS = {
 export default function PaymentReceipt({ payment, invoice }) {
   const { companyName } = useBusinessSettings()
   const balanceBefore = payment.balanceAfter !== null ? payment.balanceAfter + payment.amount : null
+  // payment.amount is always net of change (see backend/src/utils/invoiceDto.js),
+  // so what the customer actually handed over is amount + changeDue.
+  const changeDue = payment.changeDue || 0
+  const amountTendered = payment.amount + changeDue
 
   return (
     <div id="payment-receipt-print-area" className="font-mono text-sm text-ink dark:text-dark-text">
@@ -63,10 +67,27 @@ export default function PaymentReceipt({ payment, invoice }) {
         )}
       </div>
 
-      <div className="border-t border-dashed border-line dark:border-dark-border mt-3 pt-3 flex justify-between text-base font-semibold">
-        <span>Amount Received</span>
-        <span className="text-teal dark:text-dark-teal">{formatCurrency(payment.amount)}</span>
-      </div>
+      {changeDue > 0 ? (
+        <div className="border-t border-dashed border-line dark:border-dark-border mt-3 pt-3 space-y-1">
+          <div className="flex justify-between text-base font-semibold">
+            <span>Amount Tendered</span>
+            <span className="text-teal dark:text-dark-teal">{formatCurrency(amountTendered)}</span>
+          </div>
+          <div className="flex justify-between text-xs text-ink-muted dark:text-dark-muted">
+            <span>Applied to Balance</span>
+            <span className="text-ink dark:text-dark-text">{formatCurrency(payment.amount)}</span>
+          </div>
+          <div className="flex justify-between text-xs text-ink-muted dark:text-dark-muted">
+            <span>Change Given</span>
+            <span className="text-ink dark:text-dark-text">{formatCurrency(changeDue)}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="border-t border-dashed border-line dark:border-dark-border mt-3 pt-3 flex justify-between text-base font-semibold">
+          <span>Amount Received</span>
+          <span className="text-teal dark:text-dark-teal">{formatCurrency(payment.amount)}</span>
+        </div>
+      )}
 
       <div className="mt-2 space-y-1 text-xs">
         <div className="flex justify-between">
