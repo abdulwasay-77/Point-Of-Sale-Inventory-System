@@ -1,0 +1,52 @@
+
+const express = require('express');
+const ProductsController = require('./products.controller');
+const authMiddleware = require('../../middleware/authMiddleware');
+const permissionMiddleware = require('../../middleware/permissionMiddleware');
+const { PERMISSIONS } = require('../../config/permissions');
+const upload = require('../../middleware/upload').product;
+
+const router = express.Router();
+
+router.use(authMiddleware);
+
+// NOTE: /search and /lookup must be registered before /:id so they
+// aren't swallowed by it.
+router.get('/search', ProductsController.search);
+router.get('/lookup/:code', ProductsController.lookupByCode);
+router.get('/:id/batches', ProductsController.getBatches);
+router.get('/:id/variants', ProductsController.getVariants);
+router.post('/:id/variants', permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT), ProductsController.createVariant);
+router.put(
+  '/:id/variants/:variantId',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  ProductsController.updateVariant,
+);
+router.delete(
+  '/:id/variants/:variantId',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  ProductsController.removeVariant,
+);
+router.get('/', ProductsController.getAll);
+router.get('/:id', ProductsController.getById);
+router.post(
+  '/',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  upload.single('image'),
+  ProductsController.create,
+);
+router.put(
+  '/:id',
+  permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT),
+  upload.single('image'),
+  ProductsController.update,
+);
+router.delete('/:id', permissionMiddleware(PERMISSIONS.PRODUCTS_DELETE), ProductsController.remove);
+router.post(
+  '/:id/generate-barcode',
+  permissionMiddleware(PERMISSIONS.BARCODES_MANAGE),
+  ProductsController.generateBarcode,
+);
+
+module.exports = router;
+
