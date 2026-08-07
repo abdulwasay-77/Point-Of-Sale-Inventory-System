@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const { getDefaultWarehouseId } = require('../../utils/defaultWarehouse');
+const ProductsService = require('../products/products.service');
 
 class PurchasesService {
   async getAll() {
@@ -25,11 +26,17 @@ class PurchasesService {
 
 /**
  * Receiving stock. Three things beyond a plain "increase quantity":
- *  - FR: Batch & Lot Tracking — if a product is batch-tracked (tiles,
- *    mainly), each purchase line MUST include a batchNumber (+ optional
- *    shadeCode). A new Batch row is created and the incoming stock is
- *    attributed to that specific batch, not pooled anonymously — this is
- *    what makes it possible to later sell a whole order from one shade.
+ *  - FR: Batch & Lot Tracking — if a product is batch-tracked, each
+ *    purchase line MUST identify a batch, either by supplying the id of
+ *    one of the product's (or variant's) existing batches (line.batchId
+ *    — just adds quantity + a new CostLot to it, no new Batch row is
+ *    created) or by supplying a batchNumber for a brand new lot (created
+ *    with the same uniqueness validation — scoped by product + variant —
+ *    used everywhere else batches are created; see
+ *    products.service.js#assertBatchNumberAvailable). This is what makes
+ *    it possible to later sell a whole order from one lot, and what lets
+ *    a depleted batch be topped back up by its own id rather than by
+ *    retyping its batch number and hoping it matches.
  *  - FR: multi-location warehouse — stock is received into whichever
  *    warehouse is specified (defaults to the main store if omitted).
  *  - FIFO costing — every line opens a brand new CostLot at its own
@@ -58,7 +65,9 @@ class PurchasesService {
     const products = await prisma.product.findMany({ where: { id: { in: productIds } }, include: { variation_axes: true } });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Validate batch/variant info up front so we fail before writing anything.
+    // Validate batch/variant info up front so we fail before writing
+    // anything. A batch-tracked line needs EITHER an existing batchId
+    // (restocking) OR a batchNumber for a brand new lot — never neither.
     for (const line of items) {
       const product = productMap.get(line.productId);
       if (!product) {
@@ -66,8 +75,8 @@ class PurchasesService {
         err.status = 404;
         throw err;
       }
-      if (product.is_batch_tracked && !line.batchNumber?.trim()) {
-        const err = new Error(`"${product.name}" is batch-tracked — a batch number is required for this line`);
+      if (product.is_batch_tracked && !line.batchId && !line.batchNumber?.trim()) {
+        const err = new Error(`"${product.name}" is batch-tracked — pick an existing batch or enter a new batch number for this line`);
         err.status = 400;
         throw err;
       }
@@ -96,6 +105,50 @@ class PurchasesService {
         const quantity = Number(line.quantity);
         const unitCost = Number(line.costPrice ?? line.unit_cost);
         total += quantity * unitCost;
+        const variantId = line.variantId || null;
+
+        let batchId = null;
+        let batchNumberForRecord = null;
+
+        if (product.is_batch_tracked) {
+          if (line.batchId) {
+            // Restocking an existing batch — top up its quantity, no new
+            // Batch row. Scoped by product (and variant, if this batch
+            // has one) so a stray/mismatched id can't silently write
+            // against the wrong product's batch.
+            const existingBatch = await tx.batch.findFirst({
+              where: { id: line.batchId, product_id: line.productId, variant_id: variantId },
+            });
+            if (!existingBatch) {
+              const err = new Error(`"${product.name}" — the selected batch no longer exists for this product/variant.`);
+              err.status = 400;
+              throw err;
+            }
+            batchId = existingBatch.id;
+            batchNumberForRecord = existingBatch.batch_number;
+          } else {
+            // A genuinely new lot — same uniqueness validation as the
+            // product-form opening-batch path (scoped by product +
+            // variant, so two different variants may legitimately share
+            // a batch number, but this exact variant/product may not
+            // reuse one already in use).
+            const batchNumber = await ProductsService.assertBatchNumberAvailable(
+              line.productId,
+              variantId,
+              line.batchNumber,
+            );
+            const batch = await tx.batch.create({
+              data: {
+                product_id: line.productId,
+                variant_id: variantId,
+                batch_number: batchNumber,
+                received_date: new Date(),
+              },
+            });
+            batchId = batch.id;
+            batchNumberForRecord = batch.batch_number;
+          }
+        }
 
         await tx.purchaseOrderItem.create({
           data: {
@@ -104,28 +157,9 @@ class PurchasesService {
             quantity_ordered: quantity,
             quantity_received: quantity,
             unit_cost: unitCost,
-            batch_number: line.batchNumber || null,
-            shade_code: line.shadeCode || null,
+            batch_number: batchNumberForRecord,
           },
         });
-
-        const variantId = line.variantId || null;
-
-        let batchId = null;
-        if (product.is_batch_tracked) {
-          const batch = await tx.batch.upsert({
-            where: { product_id_batch_number: { product_id: line.productId, batch_number: line.batchNumber.trim() } },
-            create: {
-              product_id: line.productId,
-              variant_id: variantId,
-              batch_number: line.batchNumber.trim(),
-              shade_code: line.shadeCode?.trim() || null,
-              received_date: new Date(),
-            },
-            update: {},
-          });
-          batchId = batch.id;
-        }
 
         const existingLevel = await tx.stockLevel.findFirst({
           where: { product_id: line.productId, variant_id: variantId, warehouse_id: warehouseId, batch_id: batchId },
@@ -152,7 +186,10 @@ class PurchasesService {
         });
 
         // FIFO cost lot — see the class-level doc comment above for why
-        // this is a new lot rather than an average or overwrite.
+        // this is a new lot rather than an average or overwrite. A
+        // restock against an existing batch still opens its own new lot
+        // at this purchase's cost, same as always — costing is never
+        // blended, even within one batch.
         await tx.costLot.create({
           data: {
             product_id: line.productId,
@@ -248,7 +285,6 @@ class PurchasesService {
         quantity: Number(item.quantity_ordered),
         costPrice: Number(item.unit_cost),
         batchNumber: item.batch_number,
-        shadeCode: item.shade_code,
       })),
       total: order.items.reduce((sum, item) => sum + Number(item.quantity_ordered) * Number(item.unit_cost), 0),
     };

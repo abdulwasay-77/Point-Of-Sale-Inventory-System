@@ -15,6 +15,7 @@ router.use(authMiddleware);
 router.get('/search', ProductsController.search);
 router.get('/lookup/:code', ProductsController.lookupByCode);
 router.get('/:id/batches', ProductsController.getBatches);
+router.post('/:id/batches', permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT), ProductsController.createBatch);
 router.get('/:id/variants', ProductsController.getVariants);
 router.post('/:id/variants', permissionMiddleware(PERMISSIONS.PRODUCTS_EDIT), ProductsController.createVariant);
 router.put(

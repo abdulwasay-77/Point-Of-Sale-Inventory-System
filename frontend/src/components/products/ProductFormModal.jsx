@@ -11,6 +11,7 @@ import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import { usePermissions } from '../../hooks/usePermissions'
 import VariantManager from './VariantManager'
 import VariantValuePicker from './VariantValuePicker'
+import BatchManager from './BatchManager'
 
 /**
  * Create/Edit form for a single product. Builds a FormData payload (so the
@@ -288,7 +289,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
 
   // Same idea as the Variation gating above, but for Batch tracking: a
   // batch-tracked product's stock must always come in through a specific
-  // batch (batch number + optional shade code), and this form has no
+  // batch, and this form has no
   // batch-number field at all. So Stock Quantity is never a free-typed
   // number here once "Batch/lot tracked" is on — either it already has
   // real batches (an existing batch-tracked product, shown read-only) or
@@ -468,9 +469,6 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               placeholder="0.00"
             />
             {errors.price && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.price}</p>}
-            {!priceTouched && form.costPrice && form.targetMarginPct && (
-              <p className="text-xs text-teal-dark dark:text-dark-teal mt-1">Auto-filled from cost + target margin — edit anytime.</p>
-            )}
           </div>
 
           <div>
@@ -490,15 +488,12 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                   disabled
                   readOnly
                 />
-                <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                  Managed via the panel below — add stock to a value there.
-                </p>
               </>
             ) : isSavedBatchProduct ? (
               // Already batch-tracked in the database: every real unit of
-              // stock belongs to a specific Batch, added via Purchases —
-              // not this field. Shown read-only for the same reason as
-              // the variant case above.
+              // stock belongs to a specific Batch — added below via the
+              // Batches panel (or via Purchases) — not this field. Shown
+              // read-only for the same reason as the variant case above.
               <>
                 <input
                   id="prod-stock"
@@ -507,28 +502,21 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                   disabled
                   readOnly
                 />
-                <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                  Managed via Purchases — receive stock there with a batch number.
-                </p>
               </>
             ) : isTurningOnBatchTracking ? (
               // Batch tracking was just switched on this session (new
               // product, or an existing one that wasn't batch-tracked
               // before). There's no batch-number field on this form, so
               // stock can't be entered here — it has to come in with a
-              // batch number via Purchases, after saving.
+              // batch number afterward.
               <>
                 <input
                   id="prod-stock"
                   className="input-field figure bg-paper-dim dark:bg-dark-card2 text-ink-muted dark:text-dark-muted"
-                  value="0 (add stock via Purchases)"
+                  value="0 (add a batch after saving)"
                   disabled
                   readOnly
                 />
-                <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                  Batch-tracked products start at 0 stock — save, then receive stock with a batch number via
-                  Purchases.
-                </p>
               </>
             ) : (
               <input
@@ -542,12 +530,6 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               />
             )}
             {errors.stock && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.stock}</p>}
-            {isNewVariantProduct && (
-              <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                This is the total you'll split across added combinations below — they must add up to this number
-                exactly.
-              </p>
-            )}
           </div>
 
           {!isSavedVariantProduct && !isSavedBatchProduct && !isTurningOnBatchTracking && warehouses.length > 1 && (
@@ -723,9 +705,6 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               )}
             </div>
             {errors.barcode && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.barcode}</p>}
-            {initialValues?.id && canManageBarcodes && (
-              <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">Generating here saves immediately — no need to click Save Product first.</p>
-            )}
           </div>
 
           <div className="sm:col-span-2 border-t border-line dark:border-dark-border pt-4 mt-1">
@@ -785,15 +764,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
 
           <div className="sm:col-span-2">
             <label className="label-text">Variations</label>
-            <p className="text-xs text-ink-muted dark:text-dark-muted mb-1.5">
-              Pick every axis this product varies by at once (e.g. both Color and Size) to build combined
-              combinations like "Red, Medium" below.
-            </p>
-            {variations.length === 0 ? (
-              <p className="text-sm text-ink-muted dark:text-dark-muted bg-paper-dim dark:bg-dark-card2 rounded-lg px-3 py-2">
-                No Variations defined yet — add one on the Variations page first.
-              </p>
-            ) : (
+            {variations.length === 0 ? null : (
               <div className="flex flex-wrap gap-3">
                 {variations.map((v) => (
                   <label key={v.id} className="flex items-center gap-2 text-sm text-ink dark:text-dark-text cursor-pointer">
@@ -815,12 +786,6 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                   </label>
                 ))}
               </div>
-            )}
-            {isSavedVariantProduct && (
-              <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                This product already has combinations saved — remove them all from the panel below first to change
-                which Variations it uses.
-              </p>
             )}
           </div>
 
@@ -879,10 +844,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                 // VariantManager here would let combinations be created
                 // against a product that's still colorless in the
                 // database.
-                <p className="text-xs text-ink-muted dark:text-dark-muted bg-paper-dim dark:bg-dark-card2 rounded-lg px-3 py-2.5">
-                  Set Stock Quantity to 0 and click Save Product first — general stock can't be sold once Variations
-                  are attached. Then reopen this product to add combinations, each with its own stock.
-                </p>
+                null
               ) : (
                 <VariantValuePicker
                   variationIds={form.variationIds}
@@ -892,6 +854,26 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                 />
               )}
               {errors.variants && <p className="text-xs text-rose dark:text-dark-rose mt-2">{errors.variants}</p>}
+            </div>
+          )}
+
+          {form.isBatchTracked && (
+            <div className="sm:col-span-2">
+              {isSavedBatchProduct ? (
+                // Already batch-tracked in the database — safe to manage
+                // opening batches live via the API right away, exactly
+                // like VariantManager does for combinations above.
+                <BatchManager
+                  productId={initialValues.id}
+                  isVariantTracked={isSavedVariantProduct}
+                  warehouses={warehouses}
+                />
+              ) : (
+                // Batch tracking was just turned on this session (or this
+                // is a brand-new product) — there's nowhere to attach a
+                // Batch row yet.
+                null
+              )}
             </div>
           )}
 

@@ -22,8 +22,8 @@ const PAGE_SIZE = 6
  * Purchases — record stock coming in from a supplier. Saving a purchase
  * atomically increases each product's stock on the backend, so Inventory
  * reflects it immediately after the list is reloaded. Batch-tracked
- * products (FR: Batch & Lot Tracking) require a batch number + optional
- * shade code per line; a warehouse can be picked (FR: multi-location).
+ * products (FR: Batch & Lot Tracking) require picking an existing batch
+ * or entering a new batch number per line; a warehouse can be picked (FR: multi-location).
  *
  * Premium pass: a Dashboard-style stat row up top (reusing the exact
  * `StatCard` component) surfaces the numbers that matter at a glance —
@@ -271,7 +271,8 @@ export default function PurchasesPage() {
 }
 
 /** Modal form: select supplier + warehouse, add product lines with qty,
- *  cost price, and (for batch-tracked products) a batch number/shade.
+ *  cost price, and (for batch-tracked products) an existing batch or a
+ *  new batch number.
  *
  *  A purchase can introduce stock for a product that doesn't exist yet —
  *  rather than forcing the user out to the Products page first, the
@@ -282,8 +283,11 @@ export default function PurchasesPage() {
 function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, warehouses, onProductCreated }) {
   const [supplierId, setSupplierId] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
-  const [lines, setLines] = useState([{ productId: '', quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
+  const [lines, setLines] = useState([
+    { productId: '', quantity: 1, costPrice: '', variantId: '', batchId: '', batchNumber: '', addingNewBatch: false },
+  ])
   const [variantsByProduct, setVariantsByProduct] = useState({})
+  const [batchesByKey, setBatchesByKey] = useState({})
   const [productFormError, setProductFormError] = useState('')
   const newProductModal = useDisclosure()
 
@@ -295,13 +299,40 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
     })
   }
 
+  // Batches are scoped per (product, variant) — a product that's both
+  // variant- and batch-tracked has a distinct batch list per value, same
+  // as the POS batch selector (see VariantBatchSelectorModal). Restocking
+  // needs zero-stock batches to show up too (unlike POS, which correctly
+  // hides depleted batches from customers), so this always asks for
+  // includeZeroStock — a batch with 0 left is exactly the one that most
+  // needs to be found again here.
+  function batchKeyFor(productId, variantId) {
+    return `${productId}:${variantId || 'none'}`
+  }
+
+  function ensureBatchesLoaded(productId, variantId) {
+    const product = products.find((p) => p.id === productId)
+    if (!product?.isBatchTracked) return
+    if (product.isVariantTracked && !variantId) return
+    const key = batchKeyFor(productId, variantId)
+    if (batchesByKey[key]) return
+    productService.getBatches(productId, variantId || undefined, { includeZeroStock: true }).then((res) => {
+      setBatchesByKey((prev) => ({ ...prev, [key]: res.data.data }))
+    })
+  }
+
   useEffect(() => {
     if (isOpen) {
       setSupplierId(suppliers[0]?.id || '')
       setWarehouseId(warehouses[0]?.id || '')
       const firstProductId = products[0]?.id || ''
-      setLines([{ productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
-      if (firstProductId) ensureVariantsLoaded(firstProductId)
+      setLines([
+        { productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchId: '', batchNumber: '', addingNewBatch: false },
+      ])
+      if (firstProductId) {
+        ensureVariantsLoaded(firstProductId)
+        ensureBatchesLoaded(firstProductId, '')
+      }
     }
     // Intentionally only reacts to isOpen (i.e. the modal being opened
     // fresh) — NOT to `products`. Creating a product inline via the "New
@@ -320,10 +351,30 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, [field]: value } : line)))
   }
 
+  // When a line's batch dropdown changes: either a real batch was picked
+  // (auto-fills batchId, clears the free-text new-batch entry) or "+ Add
+  // new batch" was chosen (switches this line into free-text entry mode).
+  function handleBatchSelect(index, value) {
+    if (value === '__new__') {
+      updateLine(index, 'addingNewBatch', true)
+      setLines((prev) => prev.map((line, i) => (i === index ? { ...line, batchId: '', batchNumber: '' } : line)))
+    } else {
+      setLines((prev) =>
+        prev.map((line, i) => (i === index ? { ...line, batchId: value, batchNumber: '', addingNewBatch: false } : line)),
+      )
+    }
+  }
+
   function addLine() {
     const firstProductId = products[0]?.id || ''
-    if (firstProductId) ensureVariantsLoaded(firstProductId)
-    setLines((prev) => [...prev, { productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' }])
+    if (firstProductId) {
+      ensureVariantsLoaded(firstProductId)
+      ensureBatchesLoaded(firstProductId, '')
+    }
+    setLines((prev) => [
+      ...prev,
+      { productId: firstProductId, quantity: 1, costPrice: '', variantId: '', batchId: '', batchNumber: '', addingNewBatch: false },
+    ])
   }
 
   function removeLine(index) {
@@ -344,9 +395,10 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
       // Drop the freshly created product straight into a new line, ready
       // to receive quantity + cost — no need to re-find it in the dropdown.
       ensureVariantsLoaded(created.id)
+      ensureBatchesLoaded(created.id, '')
       setLines((prev) => [
         ...prev,
-        { productId: created.id, quantity: 1, costPrice: '', variantId: '', batchNumber: '', shadeCode: '' },
+        { productId: created.id, quantity: 1, costPrice: '', variantId: '', batchId: '', batchNumber: '', addingNewBatch: false },
       ])
     } catch (err) {
       // Handled by the global error popup (see errorBus.js) -- no local banner needed.
@@ -362,17 +414,18 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
         quantity: Number(l.quantity),
         costPrice: Number(l.costPrice),
         variantId: l.variantId || undefined,
+        batchId: l.batchId || undefined,
         batchNumber: l.batchNumber?.trim() || undefined,
-        shadeCode: l.shadeCode?.trim() || undefined,
       }))
 
     if (!items.length || !supplierId) return
-    // Batch-tracked products require a batch number, variant-tracked
-    // products require a color — block submit and let the per-line
-    // required input handle the messaging.
+    // Batch-tracked products require either an existing batch picked or a
+    // new batch number entered; variant-tracked products require a color
+    // — block submit and let the per-line required input handle the
+    // messaging.
     for (const item of items) {
       const product = productFor(item.productId)
-      if (product?.isBatchTracked && !item.batchNumber) return
+      if (product?.isBatchTracked && !item.batchId && !item.batchNumber) return
       if (product?.isVariantTracked && !item.variantId) return
     }
 
@@ -462,7 +515,11 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
                       onChange={(e) => {
                         updateLine(index, 'productId', e.target.value)
                         updateLine(index, 'variantId', '')
+                        updateLine(index, 'batchId', '')
+                        updateLine(index, 'batchNumber', '')
+                        updateLine(index, 'addingNewBatch', false)
                         ensureVariantsLoaded(e.target.value)
+                        ensureBatchesLoaded(e.target.value, '')
                       }}
                     >
                       {products.map((p) => (
@@ -506,7 +563,13 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
                       <select
                         className="input-field figure text-sm"
                         value={line.variantId}
-                        onChange={(e) => updateLine(index, 'variantId', e.target.value)}
+                        onChange={(e) => {
+                          updateLine(index, 'variantId', e.target.value)
+                          updateLine(index, 'batchId', '')
+                          updateLine(index, 'batchNumber', '')
+                          updateLine(index, 'addingNewBatch', false)
+                          ensureBatchesLoaded(line.productId, e.target.value)
+                        }}
                         required
                       >
                         <option value="">Select a {(product?.variationName || 'value').toLowerCase()} (required)</option>
@@ -519,21 +582,31 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
                     </div>
                   )}
 
-                  {product?.isBatchTracked && (
-                    <div className="grid grid-cols-2 gap-2 pl-1">
-                      <input
+                  {product?.isBatchTracked && (!product?.isVariantTracked || line.variantId) && (
+                    <div className="pl-1 space-y-2">
+                      <select
                         className="input-field figure text-sm"
-                        value={line.batchNumber}
-                        onChange={(e) => updateLine(index, 'batchNumber', e.target.value)}
-                        placeholder="Batch number (required)"
+                        value={line.addingNewBatch ? '__new__' : line.batchId}
+                        onChange={(e) => handleBatchSelect(index, e.target.value)}
                         required
-                      />
-                      <input
-                        className="input-field figure text-sm"
-                        value={line.shadeCode}
-                        onChange={(e) => updateLine(index, 'shadeCode', e.target.value)}
-                        placeholder="Shade code (optional)"
-                      />
+                      >
+                        <option value="">Select a batch (required)</option>
+                        {(batchesByKey[batchKeyFor(line.productId, line.variantId)] || []).map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.batchNumber} — {b.stock} in stock
+                          </option>
+                        ))}
+                        <option value="__new__">+ Add new batch</option>
+                      </select>
+                      {line.addingNewBatch && (
+                        <input
+                          className="input-field figure text-sm"
+                          value={line.batchNumber}
+                          onChange={(e) => updateLine(index, 'batchNumber', e.target.value)}
+                          placeholder="New batch number (required)"
+                          required
+                        />
+                      )}
                     </div>
                   )}
                 </div>

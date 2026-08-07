@@ -198,7 +198,6 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
                         />
                         <div>
                           <p className="text-sm font-medium text-ink dark:text-dark-text figure">{batch.batchNumber}</p>
-                          {batch.shadeCode && <p className="text-xs text-ink-muted dark:text-dark-muted">Shade {batch.shadeCode}</p>}
                         </div>
                       </div>
                       <span className="text-xs text-ink-muted dark:text-dark-muted figure">{batch.stock} in stock</span>

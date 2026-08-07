@@ -16,7 +16,14 @@ export const productService = {
   remove: (id) => axiosInstance.delete(`/products/${id}`),
   search: (query) => axiosInstance.get('/products/search', { params: { q: query } }),
   lookupByCode: (code) => axiosInstance.get(`/products/lookup/${encodeURIComponent(code)}`),
-  getBatches: (id, variantId) => axiosInstance.get(`/products/${id}/batches`, { params: variantId ? { variantId } : {} }),
+  getBatches: (id, variantId, options = {}) =>
+    axiosInstance.get(`/products/${id}/batches`, {
+      params: {
+        ...(variantId ? { variantId } : {}),
+        ...(options.includeZeroStock ? { includeZeroStock: 'true' } : {}),
+      },
+    }),
+  createBatch: (id, data) => axiosInstance.post(`/products/${id}/batches`, data),
   generateBarcode: (id) => axiosInstance.post(`/products/${id}/generate-barcode`),
   getVariants: (id) => axiosInstance.get(`/products/${id}/variants`),
   createVariant: (id, data) => axiosInstance.post(`/products/${id}/variants`, data),

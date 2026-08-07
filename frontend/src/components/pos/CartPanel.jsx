@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Icon from '../common/Icon'
 import EmptyState from '../common/EmptyState'
+import ConfirmDialog from '../common/ConfirmDialog'
 import { formatCurrency } from '../../utils/formatters'
 import { customerService } from '../../services/customerService'
 import { PAYMENT_METHODS } from '../../utils/constants'
@@ -36,12 +37,14 @@ export default function CartPanel({
   total,
   onCheckout,
   isCheckingOut,
+  onClearCart,
 }) {
   const [customers, setCustomers] = useState([])
   const [paymentMethod, setPaymentMethod] = useState('CASH')
   const [paidAmount, setPaidAmount] = useState('')
   const [paidTouched, setPaidTouched] = useState(false)
   const [discountEditorLineId, setDiscountEditorLineId] = useState(null)
+  const [isEmptyCartConfirmOpen, setIsEmptyCartConfirmOpen] = useState(false)
   // How the remainder (if any) gets handled — FULL means no remainder is
   // allowed at all, same behavior as before these two modules existed.
   const [saleMode, setSaleMode] = useState('FULL')
@@ -112,6 +115,17 @@ export default function CartPanel({
             <span className="ml-auto badge-amber text-[11px]">
               {items.reduce((n, i) => n + i.quantity, 0)} item{items.reduce((n, i) => n + i.quantity, 0) === 1 ? '' : 's'}
             </span>
+          )}
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsEmptyCartConfirmOpen(true)}
+              className="text-xs font-medium text-ink-muted dark:text-dark-muted hover:text-rose dark:hover:text-dark-rose transition-colors duration-150 flex items-center gap-1"
+              title="Remove every item from the current sale"
+            >
+              <Icon name="close" className="h-3.5 w-3.5" />
+              Empty Cart
+            </button>
           )}
         </div>
 
@@ -430,6 +444,15 @@ export default function CartPanel({
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={isEmptyCartConfirmOpen}
+        onClose={() => setIsEmptyCartConfirmOpen(false)}
+        onConfirm={onClearCart}
+        title="Empty the cart?"
+        message="This removes every item from the current sale."
+        confirmLabel="Empty Cart"
+      />
     </div>
   )
 }

@@ -71,9 +71,33 @@ export default function PosPage() {
     }
   }
 
-  function handleCloseInvoice() {
+  // "Done" in the invoice popup — the cashier is confirming the sale is
+  // finished. The sale record stays, the cart clears, and we jump to
+  // the sales list to show it.
+  function handleDoneInvoice() {
     setInvoice(null)
     clearCart()
+    navigate('/sales')
+  }
+
+  // Closing the invoice popup any other way (the X button, backdrop
+  // click, Esc) means the cashier changed their mind before confirming
+  // — maybe the customer wants to add more items. Nothing should have
+  // "happened" from their point of view: the sale checkout() already
+  // wrote gets undone server-side (stock restored, no row left in Sales
+  // History), and the cart is left exactly as it was so they can keep
+  // building it. Emptying the cart on purpose is now a separate,
+  // explicit action (the "Empty Cart" button in CartPanel).
+  function handleAbandonInvoice() {
+    const abandonedInvoice = invoice
+    setInvoice(null)
+    if (abandonedInvoice) {
+      salesService.abandon(abandonedInvoice.id).catch(() => {
+        setError(
+          "Couldn't fully undo that checkout on the server — if it shows up in Sales History, void it from there.",
+        )
+      })
+    }
   }
 
   return (
@@ -135,13 +159,14 @@ export default function PosPage() {
             total={total}
             onCheckout={handleCheckout}
             isCheckingOut={isCheckingOut}
+            onClearCart={clearCart}
           />
         </div>
       </div>
 
       <Modal
         isOpen={Boolean(invoice)}
-        onClose={handleCloseInvoice}
+        onClose={handleAbandonInvoice}
         title={
           invoice?.saleType === 'CREDIT'
             ? 'Sale Complete — Customer Credit'
@@ -173,10 +198,7 @@ export default function PosPage() {
             <button
               type="button"
               className="btn-accent w-full mt-3 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-8px_rgba(232,163,61,0.55)]"
-              onClick={() => {
-                handleCloseInvoice()
-                navigate('/sales')
-              }}
+              onClick={handleDoneInvoice}
             >
               Done
             </button>

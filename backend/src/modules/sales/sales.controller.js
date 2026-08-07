@@ -1,5 +1,3 @@
-
-
 const SalesService = require('./sales.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const { success, created } = require('../../utils/apiResponse');
@@ -33,7 +31,11 @@ class SalesController {
     });
     created(res, invoice, 'Sale completed');
   });
+
+  abandon = asyncHandler(async (req, res) => {
+    const result = await SalesService.abandon(req.params.id, req.user.userId);
+    success(res, result, 'Sale abandoned');
+  });
 }
 
 module.exports = new SalesController();
-

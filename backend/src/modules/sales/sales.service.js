@@ -536,6 +536,149 @@ class SalesService {
     return this.getById(invoice.id);
   }
 
+  /**
+   * Abandons a just-created sale that the cashier never actually
+   * confirmed — i.e. checkout() already ran (so the invoice, stock
+   * deductions etc. all exist), but the cashier closed the receipt
+   * popup with the X instead of clicking "Done". From the cashier's
+   * point of view nothing happened, so this fully undoes checkout's
+   * writes rather than leaving a VOID-status audit trail: stock is
+   * restored, and every row checkout created (invoice, items, payment,
+   * ledger entry, installment plan/schedule, commission record) is
+   * deleted outright. This is intentionally NOT a general "void any
+   * past sale" feature (that's a bigger, separate admin capability —
+   * see the unused InvoiceStatus.VOID / voided_at columns reserved for
+   * it); it only ever fires immediately after an unconfirmed checkout,
+   * which is why it's time-boxed to a few minutes below.
+   */
+  async abandon(id, userId) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: { items: { include: { kit: { include: { components: true } } } } },
+    });
+    if (!invoice) {
+      const err = new Error('Invoice not found');
+      err.status = 404;
+      throw err;
+    }
+
+    const ageMs = Date.now() - new Date(invoice.created_at).getTime();
+    const ABANDON_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+    if (ageMs > ABANDON_WINDOW_MS) {
+      const err = new Error(
+        'This sale can no longer be abandoned — closing the receipt popup only undoes checkout in the few minutes right after it happened.',
+      );
+      err.status = 409;
+      throw err;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const warehouseId = invoice.warehouse_id;
+
+      for (const item of invoice.items) {
+        if (item.product_id) {
+          // Restore stock for a regular (non-kit) line.
+          const level = item.variant_id || item.batch_id
+            ? await tx.stockLevel.findFirst({
+                where: {
+                  product_id: item.product_id,
+                  warehouse_id: warehouseId,
+                  variant_id: item.variant_id || null,
+                  batch_id: item.batch_id || null,
+                },
+              })
+            : await tx.stockLevel.findFirst({ where: { product_id: item.product_id, warehouse_id: warehouseId } });
+
+          if (level) {
+            await tx.stockLevel.update({ where: { id: level.id }, data: { quantity: { increment: item.quantity } } });
+          } else {
+            await tx.stockLevel.create({
+              data: {
+                product_id: item.product_id,
+                warehouse_id: warehouseId,
+                variant_id: item.variant_id || null,
+                batch_id: item.batch_id || null,
+                quantity: item.quantity,
+              },
+            });
+          }
+
+          await tx.stockMovement.create({
+            data: {
+              product_id: item.product_id,
+              variant_id: item.variant_id,
+              batch_id: item.batch_id,
+              warehouse_id: warehouseId,
+              movement_type: 'VOID_REVERSAL',
+              quantity: item.quantity,
+              reference_note: 'Checkout abandoned before confirmation',
+              created_by: userId,
+            },
+          });
+
+          // Re-add the exact cost basis this line consumed as a fresh
+          // lot, rather than trying to trace back to the specific
+          // original CostLot rows FIFO pulled from (not recorded
+          // per-row) — this keeps total on-hand cost basis accurate
+          // without needing that history.
+          const quantity = Number(item.quantity);
+          if (quantity > 0) {
+            const unitCost = Number(item.cogs_amount) / quantity;
+            await tx.costLot.create({
+              data: {
+                product_id: item.product_id,
+                variant_id: item.variant_id || null,
+                batch_id: item.batch_id || null,
+                warehouse_id: warehouseId,
+                unit_cost: Number.isFinite(unitCost) ? unitCost : 0,
+                quantity_received: quantity,
+                quantity_remaining: quantity,
+              },
+            });
+          }
+        } else if (item.kit_id && item.kit) {
+          // Restore stock for each component of a kit/bundle line.
+          for (const component of item.kit.components) {
+            const totalToRestore = Number(component.quantity) * Number(item.quantity);
+            const level = await tx.stockLevel.findFirst({
+              where: { product_id: component.component_product_id, warehouse_id: warehouseId },
+            });
+            if (level) {
+              await tx.stockLevel.update({ where: { id: level.id }, data: { quantity: { increment: totalToRestore } } });
+            } else {
+              await tx.stockLevel.create({
+                data: { product_id: component.component_product_id, warehouse_id: warehouseId, quantity: totalToRestore },
+              });
+            }
+            await tx.stockMovement.create({
+              data: {
+                product_id: component.component_product_id,
+                warehouse_id: warehouseId,
+                movement_type: 'VOID_REVERSAL',
+                quantity: totalToRestore,
+                reference_note: `Kit component restored: ${item.kit.name} (checkout abandoned)`,
+                created_by: userId,
+              },
+            });
+          }
+        }
+      }
+
+      // Delete in FK-dependency order: Payment can reference an
+      // InstallmentPayment, which belongs to an InstallmentPlan, which
+      // belongs to the Invoice — so children go first.
+      await tx.payment.deleteMany({ where: { invoice_id: id } });
+      await tx.installmentPayment.deleteMany({ where: { plan: { invoice_id: id } } });
+      await tx.installmentPlan.deleteMany({ where: { invoice_id: id } });
+      await tx.commissionRecord.deleteMany({ where: { invoice_id: id } });
+      await tx.customerLedgerEntry.deleteMany({ where: { invoice_id: id } });
+      await tx.invoiceItem.deleteMany({ where: { invoice_id: id } });
+      await tx.invoice.delete({ where: { id } });
+    });
+
+    return { id, abandoned: true };
+  }
+
   toDTO(invoice) {
     return toInvoiceDTO(invoice);
   }

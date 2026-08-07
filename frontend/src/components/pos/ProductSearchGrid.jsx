@@ -457,7 +457,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
             variantPriceAdjustment: variant?.priceAdjustment || 0,
             variantStock: variant?.stock ?? null,
             batchId: batch?.id || null,
-            batchLabel: batch ? `${batch.batchNumber}${batch.shadeCode ? ` · ${batch.shadeCode}` : ''}` : null,
+            batchLabel: batch ? batch.batchNumber : null,
           })
           setPickerProduct(null)
         }}

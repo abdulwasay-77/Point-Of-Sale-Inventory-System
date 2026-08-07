@@ -30,8 +30,17 @@ class ProductsController {
   });
 
   getBatches = asyncHandler(async (req, res) => {
-    const batches = await ProductsService.getBatches(req.params.id, req.query.variantId || null);
+    const includeZeroStock = req.query.includeZeroStock === 'true' || req.query.includeZeroStock === '1';
+    const batches = await ProductsService.getBatches(req.params.id, req.query.variantId || null, { includeZeroStock });
     success(res, batches);
+  });
+
+  createBatch = asyncHandler(async (req, res) => {
+    const batch = await ProductsService.createOpeningBatch(req.params.id, {
+      ...req.body,
+      created_by: req.user?.userId,
+    });
+    created(res, batch, 'Opening batch created');
   });
 
   // Gated by BARCODES_MANAGE at the route level (see products.routes.js) —

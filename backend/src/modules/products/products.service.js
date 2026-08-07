@@ -158,18 +158,22 @@ class ProductsService {
     const baseUomId = await this.resolveBaseUomId(data.baseUomId || data.base_uom_id);
 
     // A batch-tracked product's stock must always belong to a real Batch
-    // row (batch_number + optional shade_code) — that's the only thing
-    // GET /products/:id/batches (and therefore the POS batch picker)
-    // ever reads from. Stock Quantity entered right here on the product
-    // form has no batch-number field at all, so letting it through would
-    // create a StockLevel with batch_id: null — counted in the product's
-    // total stock and shown as "N in stock" everywhere, but with no
-    // batch for POS to offer, making it permanently unsellable there
-    // (mirrors the existing colorless-stock-vs-Variation guard below).
+    // row — that's the only thing GET /products/:id/batches (and
+    // therefore the POS batch picker) ever reads from. Stock Quantity
+    // entered right here on the product form has no batch-number field
+    // at all, so letting it through would create a StockLevel with
+    // batch_id: null — counted in the product's total stock and shown as
+    // "N in stock" everywhere, but with no batch for POS to offer, making
+    // it permanently unsellable there (mirrors the existing
+    // colorless-stock-vs-Variation guard below). A batch-tracked product
+    // therefore still always starts at 0 stock here — the real opening
+    // stock is added afterward as a proper Batch via
+    // createOpeningBatch()/POST /products/:id/batches, not through this
+    // field (and no longer only through a throwaway Purchase either).
     if (isBatchTracked && initialStock > 0) {
       const err = new Error(
         'This product is batch-tracked, so stock must come in through a specific batch — set Stock Quantity ' +
-          'to 0 and save, then receive stock with a batch number via Purchases (or record an opening batch there).',
+          'to 0 and save, then add an opening batch (or receive stock via Purchases).',
       );
       err.status = 400;
       throw err;
@@ -268,6 +272,151 @@ class ProductsService {
     }
 
     return this.getById(product.id);
+  }
+
+  /**
+   * Batch-number uniqueness is scoped by product + variant (see the
+   * schema.prisma comment on Batch for why this can't be a DB-level
+   * unique index) — enforced here in application code instead, the same
+   * pattern as assertNoDuplicateVariantCombination above. Two different
+   * variants of the same product may legitimately share a batch number;
+   * the same variant (or a non-variant product, variantId === null) may
+   * not reuse one already in use. Shared by createOpeningBatch() below
+   * and by purchases.service.js when a purchase line introduces a new
+   * batch number.
+   */
+  async assertBatchNumberAvailable(productId, variantId, batchNumber, excludeBatchId = null) {
+    const trimmed = (batchNumber || '').trim();
+    if (!trimmed) {
+      const err = new Error('A batch number is required.');
+      err.status = 400;
+      throw err;
+    }
+    const clash = await prisma.batch.findFirst({
+      where: {
+        product_id: productId,
+        variant_id: variantId || null,
+        batch_number: trimmed,
+        ...(excludeBatchId && { id: { not: excludeBatchId } }),
+      },
+    });
+    if (clash) {
+      const err = new Error(
+        variantId
+          ? `Batch number "${trimmed}" is already in use for this variant.`
+          : `Batch number "${trimmed}" is already in use for this product.`,
+      );
+      err.status = 409;
+      throw err;
+    }
+    return trimmed;
+  }
+
+  /**
+   * Opening stock for a batch-tracked product, entered directly on the
+   * product form instead of through a throwaway purchase order. Creates
+   * a real Batch, StockLevel, CostLot (purchase_order_id: null since it
+   * isn't tied to any PO), and a STOCK_IN StockMovement — mirroring
+   * exactly what a purchase does today, just without the PurchaseOrder
+   * wrapper. See POST /products/:id/batches.
+   */
+  async createOpeningBatch(productId, data) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      include: { variation_axes: true },
+    });
+    if (!product) {
+      const err = new Error('Product not found');
+      err.status = 404;
+      throw err;
+    }
+    if (!product.is_batch_tracked) {
+      const err = new Error('This product is not batch-tracked.');
+      err.status = 400;
+      throw err;
+    }
+
+    const isVariantTracked = product.variation_axes.length > 0;
+    const variantId = data.variantId || data.variant_id || null;
+    if (isVariantTracked && !variantId) {
+      const err = new Error('This product has Variations attached — pick which one this batch belongs to.');
+      err.status = 400;
+      throw err;
+    }
+    if (!isVariantTracked && variantId) {
+      const err = new Error('This product has no Variations attached — a batch here can\'t be scoped to one.');
+      err.status = 400;
+      throw err;
+    }
+    if (variantId) {
+      const variant = await prisma.productVariant.findFirst({ where: { id: variantId, product_id: productId } });
+      if (!variant) {
+        const err = new Error('That variant does not belong to this product.');
+        err.status = 400;
+        throw err;
+      }
+    }
+
+    const quantity = Number(data.quantity ?? data.stock ?? 0);
+    if (!(quantity > 0)) {
+      const err = new Error('Starting quantity must be greater than 0.');
+      err.status = 400;
+      throw err;
+    }
+    const costPrice = Number(data.costPrice ?? data.cost_price ?? 0);
+    if (Number.isNaN(costPrice) || costPrice < 0) {
+      const err = new Error('Enter a valid cost price.');
+      err.status = 400;
+      throw err;
+    }
+
+    const batchNumber = await this.assertBatchNumberAvailable(productId, variantId, data.batchNumber || data.batch_number);
+    const warehouseId = data.warehouseId || data.warehouse_id ? (data.warehouseId || data.warehouse_id) : await getDefaultWarehouseId();
+
+    const batchId = await prisma.$transaction(async (tx) => {
+      const batch = await tx.batch.create({
+        data: {
+          product_id: productId,
+          variant_id: variantId,
+          batch_number: batchNumber,
+          received_date: new Date(),
+        },
+      });
+
+      await tx.stockLevel.create({
+        data: { product_id: productId, variant_id: variantId, batch_id: batch.id, warehouse_id: warehouseId, quantity },
+      });
+
+      await tx.stockMovement.create({
+        data: {
+          product_id: productId,
+          variant_id: variantId,
+          batch_id: batch.id,
+          warehouse_id: warehouseId,
+          movement_type: 'STOCK_IN',
+          quantity,
+          reference_note: 'Opening stock for new batch',
+          created_by: data.created_by,
+        },
+      });
+
+      await tx.costLot.create({
+        data: {
+          product_id: productId,
+          variant_id: variantId,
+          batch_id: batch.id,
+          warehouse_id: warehouseId,
+          purchase_order_id: null,
+          unit_cost: costPrice,
+          quantity_received: quantity,
+          quantity_remaining: quantity,
+        },
+      });
+
+      return batch.id;
+    });
+
+    return this.getBatches(productId, variantId, { includeZeroStock: true }).then((batches) => batches.find((b) => b.id === batchId));
   }
 
   /**
@@ -566,15 +715,16 @@ class ProductsService {
       // / getBatches()) — and un-batched stock has no batch for that
       // picker to offer, so it would silently become unsellable. Refuse
       // until it's zeroed out, then bring stock in properly (with a
-      // batch number) via Purchases.
+      // batch number) via the new opening-batch panel on this form, or
+      // via Purchases.
       const unbatchedTotal = existing.stock_levels
         .filter((sl) => sl.batch_id === null)
         .reduce((sum, sl) => sum + Number(sl.quantity), 0);
       if (unbatchedTotal > 0) {
         const err = new Error(
           `This product still has ${unbatchedTotal} unit(s) of stock that aren't assigned to any batch. Set Stock ` +
-            `Quantity to 0 and save first — un-batched stock can't be sold once Batch tracking is on — then bring ` +
-            `stock in with a batch number via Purchases.`,
+            `Quantity to 0 and save first — un-batched stock can't be sold once Batch tracking is on — then add an ` +
+            `opening batch (or bring stock in via Purchases).`,
         );
         err.status = 400;
         throw err;
@@ -690,23 +840,27 @@ class ProductsService {
    * is both batch- and variant-tracked, the POS flow is: pick a variant
    * first, then call this with that variantId to list only the batches
    * belonging to that combination — not every batch of every combination.
+   *
+   * `includeZeroStock` — POS-facing calls (selling) must keep filtering
+   * to `stock > 0` so a customer is never offered a depleted batch; the
+   * Purchases restock picker and the product-form batch panel pass
+   * `includeZeroStock: true` instead, since a depleted batch is exactly
+   * the kind of batch that needs to be found again to restock it.
    */
-  async getBatches(productId, variantId = null) {
+  async getBatches(productId, variantId = null, { includeZeroStock = false } = {}) {
     const batches = await prisma.batch.findMany({
       where: { product_id: productId, ...(variantId !== null && { variant_id: variantId }) },
       include: { stock_levels: true },
       orderBy: { received_date: 'asc' },
     });
-    return batches
-      .map((b) => ({
-        id: b.id,
-        variantId: b.variant_id,
-        batchNumber: b.batch_number,
-        shadeCode: b.shade_code,
-        receivedDate: b.received_date,
-        stock: b.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0),
-      }))
-      .filter((b) => b.stock > 0);
+    const withStock = batches.map((b) => ({
+      id: b.id,
+      variantId: b.variant_id,
+      batchNumber: b.batch_number,
+      receivedDate: b.received_date,
+      stock: b.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0),
+    }));
+    return includeZeroStock ? withStock : withStock.filter((b) => b.stock > 0);
   }
 
   /**

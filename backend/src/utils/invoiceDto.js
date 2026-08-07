@@ -102,7 +102,7 @@ function toInvoiceDTO(invoice) {
       kitId: item.kit_id,
       product: item.product?.name || item.kit?.name || 'Item',
       variant: (item.variant?.values || []).map((pv) => pv.variation_value?.value).filter(Boolean).join(' / ') || null,
-      batch: item.batch ? `${item.batch.batch_number}${item.batch.shade_code ? ` (${item.batch.shade_code})` : ''}` : null,
+      batch: item.batch ? item.batch.batch_number : null,
       quantity: Number(item.quantity),
       price: Number(item.unit_price),
       discountType: item.discount_type,

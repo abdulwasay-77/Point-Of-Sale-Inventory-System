@@ -102,7 +102,7 @@ class TransfersService {
       id: transfer.id,
       product: transfer.product?.name,
       productId: transfer.product_id,
-      batch: transfer.batch ? `${transfer.batch.batch_number}${transfer.batch.shade_code ? ` (${transfer.batch.shade_code})` : ''}` : null,
+      batch: transfer.batch ? transfer.batch.batch_number : null,
       from: transfer.source_warehouse?.name,
       to: transfer.destination_warehouse?.name,
       quantity: Number(transfer.quantity),

@@ -724,7 +724,6 @@ model Batch {
   // Null for products that are batch-tracked but not variant-tracked.
   variant_id    String?   @map("variant_id")
   batch_number  String    @map("batch_number")
-  shade_code    String?   @map("shade_code")
   received_date DateTime  @map("received_date")
   created_at    DateTime  @default(now())
 
@@ -736,18 +735,26 @@ model Batch {
   transfers      StockTransfer[]
   cost_lots      CostLot[]
 
-  // Deliberately NOT [product_id, variant_id, batch_number]: Postgres
+  // Uniqueness of batch_number is scoped by product + variant, but that
+  // can't be expressed as a single DB-level unique index here: Postgres
   // treats every NULL as distinct in a unique index, so a compound key
   // including the nullable variant_id would silently stop enforcing
   // uniqueness for ordinary (non-variant) batch-tracked products, which
-  // are the majority case. Keeping batch_number unique per product only
-  // means two different colors can't reuse the exact same batch number —
-  // acceptable, and staff can simply prefix batch numbers per color
-  // (e.g. "R-B1", "BL-B1") if that's ever a real collision.
+  // are the majority case — two colorless batches named "B1" would both
+  // satisfy a [product_id, variant_id, batch_number] unique index because
+  // their variant_id is NULL on both sides, and NULL never equals NULL.
+  // So this is enforced in application code instead, the same pattern
+  // already used for variant-combination uniqueness (see
+  // products.service.js#assertNoDuplicateVariantCombination /
+  // #assertBatchNumberAvailable) — checked explicitly before insert. Two
+  // different variants of the same product are allowed to reuse the same
+  // batch number (e.g. "B1" under Red and "B1" under Blue); the same
+  // variant (or a non-variant product) may not reuse one already in use.
+  // This plain index exists purely for lookup performance.
   business_id String   @map("business_id")
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
   @@index([business_id])
-  @@unique([product_id, batch_number])
+  @@index([product_id, variant_id])
   @@map("batches")
 }
 
@@ -1202,7 +1209,6 @@ model PurchaseOrderItem {
   quantity_received Decimal   @map("quantity_received") @default(0)
   unit_cost         Decimal   @map("unit_cost")
   batch_number      String?   @map("batch_number")
-  shade_code        String?   @map("shade_code")
 
   purchase_order    PurchaseOrder @relation(fields: [purchase_order_id], references: [id])
   product           Product    @relation(fields: [product_id], references: [id])
