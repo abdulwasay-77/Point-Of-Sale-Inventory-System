@@ -1,4 +1,3 @@
-
 import { useState, useMemo, useEffect } from 'react'
 import PageHeader from '../../components/common/PageHeader'
 import Modal from '../../components/common/Modal'
@@ -15,7 +14,7 @@ import { formatCurrency } from '../../utils/formatters'
 
 /**
  * Kits & Bundles — FR: Kitting & Bundling. Sells a multi-part item (e.g. a
- * full toilet set) as a single line at its own price, while the backend
+ * multi-product bundle) as a single line at its own price, while the backend
  * automatically deducts each component product from stock individually.
  *
  * Premium pass: a Dashboard-style stat row (reusing the exact `StatCard`
@@ -101,7 +100,7 @@ export default function KitsPage() {
     <div>
       <PageHeader
         title="Kits & Bundles"
-        subtitle="Sell multi-part sets (e.g. a full toilet set) as one line — components deduct from stock automatically."
+        subtitle="Sell multi-part sets (e.g. a gift basket or starter kit) as one line — components deduct from stock automatically."
         action={
           canManage && (
             <button
@@ -232,6 +231,15 @@ function KitFormModal({ isOpen, onClose, onSave, initialValues, products }) {
   const [components, setComponents] = useState([{ productId: '', quantity: 1 }])
   const [isSaving, setIsSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  // Bundle Price defaults to the sum of the selected components' retail
+  // prices, but is fully editable — bundles are frequently sold at a
+  // slight discount to the sum of their parts. `priceTouched` tracks
+  // whether the user has typed into the price field themselves; while
+  // it's false, the field keeps auto-syncing to the component sum as
+  // components/quantities change. The moment they edit the price
+  // directly (or we're opening an existing bundle that already has its
+  // own price), we stop overwriting it.
+  const [priceTouched, setPriceTouched] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -244,8 +252,37 @@ function KitFormModal({ isOpen, onClose, onSave, initialValues, products }) {
           ? initialValues.components.map((c) => ({ productId: c.productId, quantity: c.quantity }))
           : [{ productId: products[0]?.id || '', quantity: 1 }, { productId: products[1]?.id || '', quantity: 1 }],
       )
+      // Editing an existing bundle: it already carries a deliberately-set
+      // price, so leave it alone until the user changes something.
+      // Creating a new one: start in auto-sum mode.
+      setPriceTouched(Boolean(initialValues))
     }
   }, [isOpen, initialValues, products])
+
+  const componentsSum = useMemo(() => {
+    return components.reduce((sum, c) => {
+      if (!c.productId || !(Number(c.quantity) > 0)) return sum
+      const product = products.find((p) => p.id === c.productId)
+      return sum + (Number(product?.price) || 0) * Number(c.quantity)
+    }, 0)
+  }, [components, products])
+
+  // Keep the price field in sync with the component sum until the user
+  // steps in and edits it manually.
+  useEffect(() => {
+    if (!isOpen || priceTouched) return
+    setKitPrice(componentsSum > 0 ? componentsSum.toFixed(2) : '')
+  }, [componentsSum, isOpen, priceTouched])
+
+  function handlePriceChange(value) {
+    setPriceTouched(true)
+    setKitPrice(value)
+  }
+
+  function resetPriceToSum() {
+    setPriceTouched(false)
+    setKitPrice(componentsSum > 0 ? componentsSum.toFixed(2) : '')
+  }
 
   function updateComponent(index, field, value) {
     setComponents((prev) => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)))
@@ -311,7 +348,7 @@ function KitFormModal({ isOpen, onClose, onSave, initialValues, products }) {
             <label className="label-text" htmlFor="kit-name">
               Bundle Name
             </label>
-            <input id="kit-name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Full Toilet Set" required />
+            <input id="kit-name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Starter Bundle" required />
           </div>
           <div>
             <label className="label-text" htmlFor="kit-sku">
@@ -330,10 +367,27 @@ function KitFormModal({ isOpen, onClose, onSave, initialValues, products }) {
               step="0.01"
               className="input-field figure"
               value={kitPrice}
-              onChange={(e) => setKitPrice(e.target.value)}
+              onChange={(e) => handlePriceChange(e.target.value)}
               placeholder="0.00"
               required
             />
+            {componentsSum > 0 && (
+              <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
+                Sum of component retail prices: <span className="figure">{formatCurrency(componentsSum)}</span>
+                {priceTouched && Number(kitPrice) !== componentsSum && (
+                  <>
+                    {' · '}
+                    <button
+                      type="button"
+                      onClick={resetPriceToSum}
+                      className="text-amber-dark dark:text-amber hover:underline"
+                    >
+                      Reset to sum
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
           </div>
         </div>
 
@@ -408,5 +462,3 @@ function KitFormModal({ isOpen, onClose, onSave, initialValues, products }) {
     </Modal>
   )
 }
-
-

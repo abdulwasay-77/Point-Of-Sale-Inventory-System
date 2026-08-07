@@ -1,7 +1,6 @@
-
 import axiosInstance from './axiosInstance'
 
-// Kits & bundles API layer (e.g. a full toilet set sold as one line,
+// Kits & bundles API layer (e.g. a multi-product bundle sold as one line,
 // deducting each component product from stock automatically).
 export const kitService = {
   getAll: () => axiosInstance.get('/kits'),
