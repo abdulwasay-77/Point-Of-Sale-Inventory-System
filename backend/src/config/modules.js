@@ -31,6 +31,7 @@ const MODULES = {
 const ROUTE_MODULE_MAP = {
   '/api/categories': 'PRODUCTS',
   '/api/variations': 'PRODUCTS',
+  '/api/units-of-measure': 'PRODUCTS',
   '/api/products': 'PRODUCTS',
   '/api/kits': 'KITS',
   '/api/customers': 'CONTACTS',

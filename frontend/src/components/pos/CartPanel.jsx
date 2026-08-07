@@ -292,7 +292,7 @@ export default function CartPanel({
 
           {taxTotal > 0 && (
             <div className="flex items-center justify-between mb-1">
-              <span className="text-sm text-ink-muted dark:text-dark-muted">GST (CGST + SGST)</span>
+              <span className="text-sm text-ink-muted dark:text-dark-muted">Tax (CGST + SGST)</span>
               <span className="figure text-sm text-ink dark:text-dark-text">{formatCurrency(taxTotal)}</span>
             </div>
           )}

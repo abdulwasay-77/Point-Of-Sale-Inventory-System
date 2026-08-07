@@ -14,7 +14,7 @@ class VariationsService {
       where: { is_active: true },
       include: {
         values: { where: { is_active: true }, orderBy: { value: 'asc' } },
-        _count: { select: { products: true } },
+        _count: { select: { product_axes: true } },
       },
       orderBy: { name: 'asc' },
     });
@@ -26,7 +26,7 @@ class VariationsService {
       where: { id },
       include: {
         values: { where: { is_active: true }, orderBy: { value: 'asc' } },
-        _count: { select: { products: true } },
+        _count: { select: { product_axes: true } },
       },
     });
     if (!variation) {
@@ -97,7 +97,7 @@ class VariationsService {
       },
       include: {
         values: { where: { is_active: true }, orderBy: { value: 'asc' } },
-        _count: { select: { products: true } },
+        _count: { select: { product_axes: true } },
       },
     });
     return this.toDTO(variation);
@@ -106,7 +106,7 @@ class VariationsService {
   /** Blocked while any product still uses this variation — same
    *  protection categories.service.js already has for category deletes. */
   async remove(id) {
-    const productCount = await prisma.product.count({ where: { variation_id: id } });
+    const productCount = await prisma.productVariationAxis.count({ where: { variation_id: id } });
     if (productCount > 0) {
       const err = new Error('Cannot delete a variation that is still attached to products.');
       err.status = 409;
@@ -148,7 +148,7 @@ class VariationsService {
    *  uses it — same "don't corrupt history" rule products.service.js
    *  uses for deleting a variant itself — otherwise removes it cleanly. */
   async removeValue(valueId) {
-    const usageCount = await prisma.productVariant.count({ where: { variation_value_id: valueId } });
+    const usageCount = await prisma.productVariantValue.count({ where: { variation_value_id: valueId } });
     if (usageCount > 0) {
       await prisma.variationValue.update({ where: { id: valueId }, data: { is_active: false } });
       return;
@@ -162,7 +162,7 @@ class VariationsService {
       name: variation.name,
       valueType: variation.value_type,
       unit: variation.unit,
-      productCount: variation._count?.products ?? 0,
+      productCount: variation._count?.product_axes ?? 0,
       values: (variation.values || []).map((v) => this.valueToDTO(v)),
     };
   }

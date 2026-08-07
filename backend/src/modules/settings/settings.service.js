@@ -57,7 +57,7 @@ class SettingsService {
   async updateSettings(data, userId) {
     const allowed = [
       'company_name', 'address', 'phone', 'tax_id', 'invoice_footer_note', 'currency_symbol',
-      'default_gst_rate', 'invoice_number_prefix', 'min_down_payment_pct', 'low_stock_alerts',
+      'default_tax_rate', 'invoice_number_prefix', 'min_down_payment_pct', 'low_stock_alerts',
       'overdue_credit_alerts', 'session_timeout_minutes',
     ];
     const updateData = {};
@@ -247,7 +247,7 @@ class SettingsService {
       taxId: settings.tax_id,
       invoiceFooterNote: settings.invoice_footer_note,
       currencySymbol: settings.currency_symbol,
-      defaultGstRate: Number(settings.default_gst_rate),
+      defaultTaxRate: Number(settings.default_tax_rate),
       invoiceNumberPrefix: settings.invoice_number_prefix,
       minDownPaymentPct: Number(settings.min_down_payment_pct),
       lowStockAlerts: settings.low_stock_alerts,

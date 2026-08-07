@@ -185,7 +185,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
             {(product.isBatchTracked || product.isVariantTracked) && (
               <span className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
                 {product.isVariantTracked && !isGrid && (
-                  <span className="badge-amber text-[10px] px-1.5 py-0.5">{product.variationName || 'Variant'}</span>
+                  <span className="badge-amber text-[10px] px-1.5 py-0.5">{(product.variationNames || []).join(' + ') || 'Variant'}</span>
                 )}
                 {product.isBatchTracked && !isGrid && <span className="badge-amber text-[10px] px-1.5 py-0.5">Batch</span>}
                 {isGrid && <span className="h-2 w-2 rounded-full bg-amber ring-2 ring-white dark:ring-dark-card" />}
@@ -249,7 +249,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
             <div className="flex items-center gap-1.5">
               <p className="text-sm font-medium text-ink dark:text-dark-text truncate">{product.name}</p>
               {product.isVariantTracked && (
-                <span className="badge-amber text-[10px] px-1.5 py-0.5 shrink-0">{product.variationName || 'Variant'}</span>
+                <span className="badge-amber text-[10px] px-1.5 py-0.5 shrink-0">{(product.variationNames || []).join(' + ') || 'Variant'}</span>
               )}
               {product.isBatchTracked && <span className="badge-amber text-[10px] px-1.5 py-0.5 shrink-0">Batch</span>}
             </div>

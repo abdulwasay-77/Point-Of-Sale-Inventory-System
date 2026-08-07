@@ -23,16 +23,17 @@ export const CartContext = createContext(null)
  *   discountAmount = PERCENTAGE: grossLineTotal * value/100
  *                     FLAT: value * quantity (a per-unit amount)
  *   lineTotal (taxable) = grossLineTotal - discountAmount
- *   tax = lineTotal * gstRate / 100
- * Kit lines are treated as already GST-inclusive and never discounted
+ *   tax = lineTotal * taxRate / 100
+ * Kit lines are treated as already tax-inclusive and never discounted
  * (kits are priced as a bundle, not built from individually-discountable
  * components) — same as they've always been tax-exempt here.
  *
  * A product line's discount starts as that product's standing default
  * (discountType/discountValue, set by an admin — see ProductFormModal)
- * but can be overridden per sale via setLineDiscount, exactly like GST
- * can't be overridden but discount deliberately can (a cashier haggling
- * on one sale shouldn't need an admin to change the product's default).
+ * but can be overridden per sale via setLineDiscount — unlike tax rate,
+ * which can't be overridden but discount deliberately can (a cashier
+ * haggling on one sale shouldn't need an admin to change the product's
+ * default).
  */
 export function CartProvider({ children }) {
   const [items, setItems] = useState([])
@@ -78,7 +79,7 @@ export function CartProvider({ children }) {
             name: product.name,
             sku: product.sku,
             price: product.price + Number(variantPriceAdjustment || 0),
-            gstRate: Number(product.gstRate) || 0,
+            taxRate: Number(product.taxRate) || 0,
             discountType: product.discountType || 'PERCENTAGE',
             discountValue: Number(product.discountValue) || 0,
             stock: stockCap,
@@ -92,7 +93,7 @@ export function CartProvider({ children }) {
 
   /** Adds a kit (bundle) line — priced and sold as one unit, backend
    *  deducts each component product from stock. Kit lines are
-   *  GST-inclusive and never discounted, same as before. */
+   *  tax-inclusive and never discounted, same as before. */
   const addKitItem = useCallback((kit) => {
     const lineId = lineIdFor('kit', kit.id)
     setItems((prev) => {
@@ -110,7 +111,7 @@ export function CartProvider({ children }) {
           name: `${kit.name} (bundle)`,
           sku: kit.sku,
           price: kit.price,
-          gstRate: 0,
+          taxRate: 0,
           discountType: 'PERCENTAGE',
           discountValue: 0,
           stock: kit.availableQty,
@@ -163,7 +164,7 @@ export function CartProvider({ children }) {
           discountAmount = Math.max(0, Math.min(discountAmount, grossLineTotal))
         }
         const lineTotal = grossLineTotal - discountAmount
-        const taxAmount = item.kind === 'kit' ? 0 : (lineTotal * item.gstRate) / 100
+        const taxAmount = item.kind === 'kit' ? 0 : (lineTotal * item.taxRate) / 100
         return { ...item, grossLineTotal, discountAmount, lineTotal, taxAmount }
       }),
     [items],

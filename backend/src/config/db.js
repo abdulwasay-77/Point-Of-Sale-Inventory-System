@@ -41,7 +41,8 @@ const tenantContext = new AsyncLocalStorage();
 // business's rows") rather than failing open and silently leaking data.
 const TENANT_MODELS = new Set([
   'User', 'Role', 'RolePermission', 'UserPermission', 'AuditLog',
-  'Category', 'Product', 'ProductVariant', 'Variation', 'VariationValue',
+  'Category', 'Product', 'ProductVariant', 'ProductVariantValue', 'ProductVariationAxis',
+  'Variation', 'VariationValue', 'UnitOfMeasure',
   'Kit', 'KitComponent', 'Warehouse', 'Batch', 'CostLot', 'StockLevel',
   'StockMovement', 'StockTransfer', 'Customer', 'CustomerLedgerEntry',
   'Invoice', 'InvoiceItem', 'Payment', 'InstallmentPlan', 'InstallmentPayment',

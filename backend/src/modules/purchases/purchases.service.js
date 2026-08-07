@@ -55,7 +55,7 @@ class PurchasesService {
     const poNumber = `PO-${String(Date.now()).slice(-8)}`;
 
     const productIds = items.map((line) => line.productId);
-    const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+    const products = await prisma.product.findMany({ where: { id: { in: productIds } }, include: { variation_axes: true } });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     // Validate batch/variant info up front so we fail before writing anything.
@@ -71,7 +71,7 @@ class PurchasesService {
         err.status = 400;
         throw err;
       }
-      if (product.variation_id && !line.variantId) {
+      if (product.variation_axes.length > 0 && !line.variantId) {
         const err = new Error(`"${product.name}" has a variation attached — a value must be selected for this line`);
         err.status = 400;
         throw err;

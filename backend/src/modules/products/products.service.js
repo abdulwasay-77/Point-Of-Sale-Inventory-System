@@ -3,13 +3,13 @@ const prisma = require('../../config/db');
 const { getDefaultWarehouseId } = require('../../utils/defaultWarehouse');
 const { PERMISSIONS } = require('../../config/permissions');
 
-// Fields considered "pricing" — GST, discount, target margin, and cost.
-// Editing these requires PRICING_MANAGE (Admin only by default); ordinary
-// PRODUCTS_EDIT (which Warehouse Staff also has) is not enough. This is
-// enforced here, not just hidden in the UI, so a crafted request from a
-// non-admin account can't slip these through.
+// Fields considered "pricing" — tax rate, discount, target margin, and
+// cost. Editing these requires PRICING_MANAGE (Admin only by default);
+// ordinary PRODUCTS_EDIT (which Warehouse Staff also has) is not enough.
+// This is enforced here, not just hidden in the UI, so a crafted request
+// from a non-admin account can't slip these through.
 const PRICING_FIELD_KEYS = [
-  'gst_rate',
+  'tax_rate',
   'discount_type',
   'discount_value',
   'target_margin_pct',
@@ -49,7 +49,48 @@ async function generateUniqueBarcode() {
   return `9${Date.now()}`.slice(0, 12);
 }
 
+// Shared include shape for a product's variation axes (which Variations
+// it uses at all — see ProductVariationAxis in schema.prisma) and its
+// unit of measure, used by every query that needs to build a full DTO.
+const PRODUCT_INCLUDE = {
+  category: true,
+  base_uom: true,
+  stock_levels: true,
+  variation_axes: { include: { variation: true } },
+};
+
+// A variant's full value combination, e.g. "Red, Medium" — needs to walk
+// through the join table to each VariationValue and its parent Variation.
+const VARIANT_INCLUDE = {
+  stock_levels: true,
+  values: { include: { variation_value: { include: { variation: true } } } },
+};
+
 class ProductsService {
+  /** Resolves which UOM a new/updated product should use. Accepts either
+   *  an explicit id, or — if none given — falls back to the business's
+   *  first active unit (alphabetically), the same "sensible default,
+   *  never force a blocked save" spirit the old `data.base_uom || 'PIECE'`
+   *  had, just against a business-managed list instead of a fixed enum. */
+  async resolveBaseUomId(explicitId) {
+    if (explicitId) {
+      const unit = await prisma.unitOfMeasure.findUnique({ where: { id: explicitId } });
+      if (!unit) {
+        const err = new Error('That unit of measure no longer exists. Pick another one, or add it under Settings → Units.');
+        err.status = 400;
+        throw err;
+      }
+      return unit.id;
+    }
+    const fallback = await prisma.unitOfMeasure.findFirst({ where: { is_active: true }, orderBy: { name: 'asc' } });
+    if (!fallback) {
+      const err = new Error('This business has no units of measure yet. Add at least one under Settings → Units before adding products.');
+      err.status = 400;
+      throw err;
+    }
+    return fallback.id;
+  }
+
   async getAll({ q, categoryId } = {}) {
     const where = {
       is_active: true,
@@ -64,7 +105,7 @@ class ProductsService {
 
     const products = await prisma.product.findMany({
       where,
-      include: { category: true, variation: true, stock_levels: true },
+      include: PRODUCT_INCLUDE,
       orderBy: { name: 'asc' },
     });
     return products.map((p) => this.toDTO(p));
@@ -77,7 +118,7 @@ class ProductsService {
   async getById(id) {
     const product = await prisma.product.findUnique({
       where: { id },
-      include: { category: true, variation: true, stock_levels: true },
+      include: PRODUCT_INCLUDE,
     });
     if (!product) {
       const err = new Error('Product not found');
@@ -92,21 +133,29 @@ class ProductsService {
    * from non-HTTP contexts (e.g. the seed script) without needing to fake
    * a permission list — in that case pricing fields are always allowed.
    *
-   * `variants`, when a Variation is attached (`data.variation_id`), is the
-   * list of specific values picked in the Add Product form — each
-   * { variationValueId, sku, stock, priceOverride? } — pulled from that
-   * Variation's globally-defined values (see the Variations module),
-   * never typed fresh here. See validateVariantAllocation() for why this
-   * is required and must exactly cover `data.stock`, and why the whole
-   * thing runs in one transaction (see the block below).
+   * `variationIds` (data.variationIds) is the set of Variations this
+   * product uses at all — e.g. both "Color" and "Size" — see
+   * ProductVariationAxis in schema.prisma. A product can use zero, one,
+   * or several Variations at once; this is what makes multi-axis variants
+   * ("Red, Medium") possible, where the old schema only ever allowed one.
+   *
+   * `variants`, when variationIds is non-empty, is the list of specific
+   * combinations picked in the Add Product form — each
+   * { variationValueIds: [id, id, ...], sku, stock, priceOverride? } —
+   * one value id per axis in variationIds, pulled from each Variation's
+   * globally-defined values (see the Variations module), never typed
+   * fresh here. See validateVariantAllocation() for why this is required
+   * and must exactly cover `data.stock`, and why the whole thing runs in
+   * one transaction (see the block below).
    */
   async create(rawData, imageFile, actorPermissions = null, variants = null) {
     const data = actorPermissions === null ? rawData : stripUnauthorizedPricingFields(rawData, actorPermissions);
-    const warehouseId = await getDefaultWarehouseId();
+    const warehouseId = data.warehouseId || data.warehouse_id ? (data.warehouseId || data.warehouse_id) : await getDefaultWarehouseId();
     const initialStock = Number(data.stock ?? 0);
     const costPrice = Number(data.cost_price ?? 0);
-    const variationId = data.variationId || data.variation_id || null;
+    const variationIds = Array.isArray(data.variationIds) ? data.variationIds.filter(Boolean) : (data.variationIds ? [data.variationIds] : []);
     const isBatchTracked = data.is_batch_tracked === true || data.is_batch_tracked === 'true';
+    const baseUomId = await this.resolveBaseUomId(data.baseUomId || data.base_uom_id);
 
     // A batch-tracked product's stock must always belong to a real Batch
     // row (batch_number + optional shade_code) — that's the only thing
@@ -126,8 +175,8 @@ class ProductsService {
       throw err;
     }
 
-    if (variationId) {
-      await this.validateVariantAllocation(variationId, variants, initialStock);
+    if (variationIds.length > 0) {
+      await this.validateVariantAllocation(variationIds, variants, initialStock);
     }
 
     // Barcode is either an existing one scanned/typed in (e.g. a
@@ -141,19 +190,21 @@ class ProductsService {
       sku: data.sku,
       category_id: data.categoryId || data.category_id || null,
       brand: data.brand || null,
-      base_uom: data.base_uom || 'PIECE',
+      base_uom_id: baseUomId,
+      // Coverage/box-math (Area-to-Box calculator) — optional, domain-
+      // specific (tile/flooring-style products). Left as-is here at the
+      // schema level; only its label in the product form changed.
       coverage_per_box: data.coverage_per_box !== undefined && data.coverage_per_box !== '' ? Number(data.coverage_per_box) : null,
       conversion_factor: data.conversion_factor !== undefined && data.conversion_factor !== '' ? Number(data.conversion_factor) : null,
       is_batch_tracked: isBatchTracked,
-      variation_id: variationId,
       length: data.length !== undefined && data.length !== '' ? Number(data.length) : null,
       width: data.width !== undefined && data.width !== '' ? Number(data.width) : null,
       dimension_unit: data.dimension_unit || null,
       retail_price: Number(data.price ?? data.retail_price ?? 0),
       wholesale_price: Number(data.wholesale_price ?? data.price ?? 0),
       cost_price: costPrice,
-      hsn_code: data.hsn_code || '0000',
-      gst_rate: Number(data.gst_rate ?? 0),
+      tax_code: data.tax_code || data.taxCode || null,
+      tax_rate: Number(data.tax_rate ?? data.gst_rate ?? 0),
       discount_type: data.discount_type === 'FLAT' ? 'FLAT' : 'PERCENTAGE',
       discount_value: Number(data.discount_value ?? 0),
       target_margin_pct:
@@ -166,18 +217,21 @@ class ProductsService {
       is_active: true,
     };
 
-    // A product with a Variation attached never gets a colorless
+    // A product with Variations attached never gets a colorless
     // (variant_id: null) stock row — every unit must belong to one of the
-    // picked values, otherwise it becomes unreachable from POS (the
+    // picked combinations, otherwise it becomes unreachable from POS (the
     // variant picker there only ever lists variants, it has no "no
     // value" option). So the product itself is created with zero base
-    // stock, and each picked value's stock is created alongside it, all
-    // inside one transaction — if any variant fails to save, the whole
-    // product creation rolls back rather than leaving a product with
-    // some values missing.
-    if (variationId) {
+    // stock, and each picked combination's stock is created alongside it,
+    // all inside one transaction — if any variant fails to save, the
+    // whole product creation rolls back rather than leaving a product
+    // with some combinations missing.
+    if (variationIds.length > 0) {
       const productId = await prisma.$transaction(async (tx) => {
         const createdProduct = await tx.product.create({ data: productData });
+        await tx.productVariationAxis.createMany({
+          data: variationIds.map((variationId) => ({ product_id: createdProduct.id, variation_id: variationId })),
+        });
         await this.allocateVariantsInTx(tx, createdProduct.id, variants, warehouseId, costPrice, data.created_by);
         return createdProduct.id;
       });
@@ -218,59 +272,122 @@ class ProductsService {
 
   /**
    * Enforces that Stock Quantity is fully accounted for by the picked
-   * values — no more, no less — for a product with a Variation attached.
-   * This is the fix for the bug where units entered in the top-level
-   * Stock Quantity field silently ended up in a colorless stock row that
-   * the POS variant picker could never sell: rather than allow that split
-   * to exist at all, saving is blocked until the two numbers match
-   * exactly. Also checks every picked value actually belongs to the
-   * chosen Variation — the values a product can pick from are never
-   * invented on the fly, only selected from what's already defined on
-   * the Variations page.
+   * combinations — no more, no less — for a product with Variations
+   * attached. Also checks:
+   *  - every picked combination has exactly one value per axis in
+   *    variationIds (a variant for a Color+Size product must specify
+   *    both, never just one)
+   *  - every picked value actually belongs to one of the attached
+   *    Variations — the values a product can pick from are never
+   *    invented on the fly, only selected from what's already defined on
+   *    the Variations page
+   *  - no two combinations in this batch are identical (e.g. two
+   *    "Red, Medium" rows) — Postgres can't express this as a simple
+   *    constraint on a join table, so it's checked here instead, the
+   *    same way roles.service.js checks name uniqueness before insert
+   *    rather than only relying on the database to catch it
    */
-  async validateVariantAllocation(variationId, variants, declaredStock) {
+  async validateVariantAllocation(variationIds, variants, declaredStock) {
     if (!Array.isArray(variants) || variants.length === 0) {
-      const err = new Error('Pick at least one value before saving a product with a Variation attached.');
+      const err = new Error('Pick at least one combination before saving a product with Variations attached.');
       err.status = 400;
       throw err;
     }
-    const validValueIds = new Set(
-      (await prisma.variationValue.findMany({ where: { variation_id: variationId, is_active: true }, select: { id: true } })).map(
-        (v) => v.id,
-      ),
-    );
+
+    const axisCount = variationIds.length;
+    const valuesByVariation = await prisma.variationValue.findMany({
+      where: { variation_id: { in: variationIds }, is_active: true },
+      select: { id: true, variation_id: true },
+    });
+    const validValueIds = new Set(valuesByVariation.map((v) => v.id));
+    const variationOfValue = new Map(valuesByVariation.map((v) => [v.id, v.variation_id]));
+
+    const seenCombinations = new Set();
     for (const v of variants) {
-      const variationValueId = v.variationValueId || v.variation_value_id;
+      const valueIds = Array.isArray(v.variationValueIds) ? v.variationValueIds : (v.variationValueIds ? [v.variationValueIds] : []);
       const sku = (v.sku || '').trim();
-      if (!variationValueId || !validValueIds.has(variationValueId)) {
-        const err = new Error('One of the picked values no longer belongs to this variation.');
+
+      if (valueIds.length !== axisCount) {
+        const err = new Error(
+          `Every combination needs exactly one value for each of the ${axisCount} attached Variation(s) — got ${valueIds.length}.`,
+        );
         err.status = 400;
         throw err;
       }
+
+      const axesUsed = new Set();
+      for (const valueId of valueIds) {
+        if (!validValueIds.has(valueId)) {
+          const err = new Error('One of the picked values no longer belongs to an attached Variation.');
+          err.status = 400;
+          throw err;
+        }
+        const axis = variationOfValue.get(valueId);
+        if (axesUsed.has(axis)) {
+          const err = new Error('A combination can only use one value per Variation (e.g. one Color, one Size) — not two of the same axis.');
+          err.status = 400;
+          throw err;
+        }
+        axesUsed.add(axis);
+      }
+
       if (!sku) {
-        const err = new Error('Every picked value needs its own SKU.');
+        const err = new Error('Every picked combination needs its own SKU.');
         err.status = 400;
         throw err;
       }
+
+      const comboKey = [...valueIds].sort().join('|');
+      if (seenCombinations.has(comboKey)) {
+        const err = new Error('Two of the picked combinations are identical — each combination can only be added once.');
+        err.status = 400;
+        throw err;
+      }
+      seenCombinations.add(comboKey);
     }
+
     const allocated = variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0);
     if (allocated !== Number(declaredStock)) {
       const err = new Error(
-        `Stock Quantity (${declaredStock}) must exactly match the total stock across all picked values (currently ${allocated}). ` +
-          `Adjust Stock Quantity or the per-value stock so they match.`,
+        `Stock Quantity (${declaredStock}) must exactly match the total stock across all picked combinations (currently ${allocated}). ` +
+          `Adjust Stock Quantity or the per-combination stock so they match.`,
       );
       err.status = 400;
       throw err;
     }
   }
 
-  /** Creates each picked value's variant plus its stock/cost lot, inside
-   *  an already-open transaction. Shared by create() (brand-new product)
-   *  and update() (attaching a Variation to an existing product). */
+  /**
+   * Checks a single new combination (used by createVariant, the "add one
+   * more combination to an existing product" flow) against every
+   * combination the product already has, so a duplicate can't be added
+   * one at a time the way validateVariantAllocation only guards against
+   * within a single batch create.
+   */
+  async assertNoDuplicateVariantCombination(productId, valueIds, excludeVariantId = null) {
+    const existingVariants = await prisma.productVariant.findMany({
+      where: { product_id: productId, is_active: true, ...(excludeVariantId && { id: { not: excludeVariantId } }) },
+      include: { values: true },
+    });
+    const target = [...valueIds].sort().join('|');
+    const clash = existingVariants.some((variant) => {
+      const combo = variant.values.map((pv) => pv.variation_value_id).sort().join('|');
+      return combo === target;
+    });
+    if (clash) {
+      const err = new Error('This exact combination already exists for this product.');
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  /** Creates each picked combination's variant plus its stock/cost lot,
+   *  inside an already-open transaction. Shared by create() (brand-new
+   *  product) and update() (attaching Variations to an existing product). */
   async allocateVariantsInTx(tx, productId, variants, warehouseId, fallbackCostPrice, createdBy) {
     for (const v of variants) {
       const stock = Number(v.stock ?? 0);
-      const variationValueId = v.variationValueId || v.variation_value_id;
+      const valueIds = Array.isArray(v.variationValueIds) ? v.variationValueIds : (v.variationValueIds ? [v.variationValueIds] : []);
       const priceOverride =
         v.priceOverride !== undefined && v.priceOverride !== null && v.priceOverride !== ''
           ? Number(v.priceOverride)
@@ -278,10 +395,12 @@ class ProductsService {
       const variant = await tx.productVariant.create({
         data: {
           product_id: productId,
-          variation_value_id: variationValueId,
           sku: (v.sku || '').trim().toUpperCase(),
           price_override: priceOverride,
         },
+      });
+      await tx.productVariantValue.createMany({
+        data: valueIds.map((variationValueId) => ({ variant_id: variant.id, variation_value_id: variationValueId })),
       });
 
       if (stock > 0) {
@@ -316,14 +435,43 @@ class ProductsService {
 
   async update(id, rawData, imageFile, actorPermissions = null) {
     const data = actorPermissions === null ? rawData : stripUnauthorizedPricingFields(rawData, actorPermissions);
-    const existing = await prisma.product.findUnique({ where: { id }, include: { stock_levels: true } });
+    const existing = await prisma.product.findUnique({
+      where: { id },
+      include: { stock_levels: true, variation_axes: true, variants: { where: { is_active: true } } },
+    });
     if (!existing) {
       const err = new Error('Product not found');
       err.status = 404;
       throw err;
     }
 
-    const newVariationId = data.variationId !== undefined ? data.variationId || null : data.variation_id !== undefined ? data.variation_id || null : undefined;
+    const newVariationIds = data.variationIds !== undefined
+      ? (Array.isArray(data.variationIds) ? data.variationIds.filter(Boolean) : (data.variationIds ? [data.variationIds] : []))
+      : undefined;
+    const existingVariationIds = existing.variation_axes.map((a) => a.variation_id);
+
+    if (newVariationIds !== undefined && existing.variants.length > 0) {
+      // Changing which Variations a product uses once real combinations
+      // already exist would orphan them (a "Red, Medium" variant makes no
+      // sense if Size is removed as an axis) — same spirit as the
+      // existing turningOnVariantTracking/turningOnBatchTracking guards
+      // below: block the axis change until existing variants are removed
+      // first, rather than silently corrupting them.
+      const sameSet = newVariationIds.length === existingVariationIds.length
+        && newVariationIds.every((v) => existingVariationIds.includes(v));
+      if (!sameSet) {
+        const err = new Error(
+          `This product already has ${existing.variants.length} combination(s) saved. Remove them from the Variant ` +
+            `panel first before changing which Variations this product uses.`,
+        );
+        err.status = 400;
+        throw err;
+      }
+    }
+
+    const baseUomId = data.baseUomId !== undefined || data.base_uom_id !== undefined
+      ? await this.resolveBaseUomId(data.baseUomId || data.base_uom_id)
+      : undefined;
 
     await prisma.product.update({
       where: { id },
@@ -339,8 +487,8 @@ class ProductsService {
         }),
         ...(data.wholesale_price !== undefined && { wholesale_price: Number(data.wholesale_price) }),
         ...(data.cost_price !== undefined && { cost_price: Number(data.cost_price) }),
-        ...(data.hsn_code !== undefined && { hsn_code: data.hsn_code }),
-        ...(data.gst_rate !== undefined && { gst_rate: Number(data.gst_rate) }),
+        ...((data.tax_code !== undefined || data.taxCode !== undefined) && { tax_code: data.tax_code || data.taxCode || null }),
+        ...((data.tax_rate !== undefined || data.gst_rate !== undefined) && { tax_rate: Number(data.tax_rate ?? data.gst_rate) }),
         ...(data.discount_type !== undefined && { discount_type: data.discount_type === 'FLAT' ? 'FLAT' : 'PERCENTAGE' }),
         ...(data.discount_value !== undefined && { discount_value: Number(data.discount_value) }),
         ...(data.target_margin_pct !== undefined && {
@@ -348,7 +496,7 @@ class ProductsService {
         }),
         ...(data.reorder_threshold !== undefined && { reorder_threshold: Number(data.reorder_threshold) }),
         ...(data.barcode !== undefined && { barcode: data.barcode?.trim() || null }),
-        ...(data.base_uom !== undefined && { base_uom: data.base_uom }),
+        ...(baseUomId !== undefined && { base_uom_id: baseUomId }),
         ...(data.coverage_per_box !== undefined && {
           coverage_per_box: data.coverage_per_box === '' ? null : Number(data.coverage_per_box),
         }),
@@ -358,7 +506,6 @@ class ProductsService {
         ...(data.is_batch_tracked !== undefined && {
           is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
         }),
-        ...(newVariationId !== undefined && { variation_id: newVariationId }),
         ...(data.length !== undefined && { length: data.length === '' ? null : Number(data.length) }),
         ...(data.width !== undefined && { width: data.width === '' ? null : Number(data.width) }),
         ...(data.dimension_unit !== undefined && { dimension_unit: data.dimension_unit || null }),
@@ -366,12 +513,22 @@ class ProductsService {
       },
     });
 
-    // Whether the product will have a Variation attached *after* this
-    // update (may be attaching right now, or may already have been on).
-    const willBeVariantTracked = newVariationId !== undefined ? Boolean(newVariationId) : Boolean(existing.variation_id);
-    const turningOnVariantTracking = willBeVariantTracked && !existing.variation_id && newVariationId !== undefined;
+    // Attaching Variations for the first time (existing had none, request
+    // supplies a non-empty set) — create the axis rows now. (Removing/
+    // changing axes once variants exist is blocked above; attaching to a
+    // product that had zero axes and zero variants is always safe.)
+    if (newVariationIds !== undefined && existingVariationIds.length === 0 && newVariationIds.length > 0) {
+      await prisma.productVariationAxis.createMany({
+        data: newVariationIds.map((variationId) => ({ product_id: id, variation_id: variationId })),
+      });
+    }
 
-    // Same idea, but for Batch tracking instead of a Variation.
+    // Whether the product will have Variations attached *after* this
+    // update (may be attaching right now, or may already have been on).
+    const willBeVariantTracked = newVariationIds !== undefined ? newVariationIds.length > 0 : existingVariationIds.length > 0;
+    const turningOnVariantTracking = willBeVariantTracked && existingVariationIds.length === 0 && newVariationIds !== undefined;
+
+    // Same idea, but for Batch tracking instead of Variations.
     const willBeBatchTracked =
       data.is_batch_tracked !== undefined
         ? data.is_batch_tracked === true || data.is_batch_tracked === 'true'
@@ -379,21 +536,22 @@ class ProductsService {
     const turningOnBatchTracking = willBeBatchTracked && !existing.is_batch_tracked && data.is_batch_tracked !== undefined;
 
     if (turningOnVariantTracking) {
-      // Attaching a Variation to a product that already has plain
+      // Attaching Variations to a product that already has plain
       // (colorless) stock. That stock would become permanently
-      // unreachable from POS the moment a Variation is attached (the POS
+      // unreachable from POS the moment Variations are attached (the POS
       // variant picker only ever lists variants — see
       // VariantBatchSelectorModal), so refuse the change until it's been
       // zeroed out here first — the admin can then reopen this product
-      // and add values with their own stock via the Variant panel below.
+      // and add combinations with their own stock via the Variant panel
+      // below.
       const colorlessTotal = existing.stock_levels
         .filter((sl) => sl.variant_id === null)
         .reduce((sum, sl) => sum + Number(sl.quantity), 0);
       if (colorlessTotal > 0) {
         const err = new Error(
           `This product still has ${colorlessTotal} unit(s) of general (unassigned) stock. Set Stock Quantity to 0 ` +
-            `and save first — general stock can't be sold once a Variation is attached — then reopen this product ` +
-            `to add values, each with its own stock.`,
+            `and save first — general stock can't be sold once Variations are attached — then reopen this product ` +
+            `to add combinations, each with its own stock.`,
         );
         err.status = 400;
         throw err;
@@ -424,9 +582,9 @@ class ProductsService {
     }
 
     // Optional stock adjustment: if `stock` is passed, reconcile the total
-    // colorless stock across the default warehouse to match the new
-    // value. Never runs for a product with a Variation attached — every
-    // unit there must belong to a specific value (added via the Variant
+    // colorless stock across the target warehouse to match the new value.
+    // Never runs for a product with Variations attached — every unit
+    // there must belong to a specific combination (added via the Variant
     // panel / VariantManager, not this field), otherwise it would end up
     // in a colorless stock row the POS variant picker can never sell, and
     // this block's old `findFirst` (unfiltered by variant_id) could also
@@ -437,7 +595,7 @@ class ProductsService {
     // guard above exists to prevent. Batch-tracked stock must always
     // come in through Purchases.
     if (data.stock !== undefined && !willBeVariantTracked && !willBeBatchTracked) {
-      const warehouseId = await getDefaultWarehouseId();
+      const warehouseId = data.warehouseId || data.warehouse_id ? (data.warehouseId || data.warehouse_id) : await getDefaultWarehouseId();
       const currentTotal = existing.stock_levels.reduce((sum, sl) => sum + Number(sl.quantity), 0);
       const target = Number(data.stock);
       const delta = target - currentTotal;
@@ -502,7 +660,7 @@ class ProductsService {
         is_active: true,
         OR: [{ barcode: trimmed }, { sku: { equals: trimmed, mode: 'insensitive' } }],
       },
-      include: { category: true, variation: true, stock_levels: true },
+      include: PRODUCT_INCLUDE,
     });
     return product ? this.toDTO(product) : null;
   }
@@ -531,7 +689,7 @@ class ProductsService {
    * Available batches, optionally scoped to one variant. When a product
    * is both batch- and variant-tracked, the POS flow is: pick a variant
    * first, then call this with that variantId to list only the batches
-   * belonging to that value — not every batch of every value.
+   * belonging to that combination — not every batch of every combination.
    */
   async getBatches(productId, variantId = null) {
     const batches = await prisma.batch.findMany({
@@ -552,98 +710,122 @@ class ProductsService {
   }
 
   /**
-   * The specific values a product actually sells (e.g. "Red" under
-   * "Color") — a deliberate customer choice, not the same thing as a
+   * The specific combinations a product actually sells (e.g. "Red,
+   * Medium") — a deliberate customer choice, not the same thing as a
    * Batch (incidental manufacturing lot variation the customer never
    * chooses between). See the ProductVariant/Variation model comments in
    * schema.prisma for the full distinction. Only relevant for products
-   * with a Variation attached, but this works regardless — the attached
-   * Variation just controls whether the frontend shows variant selection
+   * with Variations attached, but this works regardless — the attached
+   * Variations just control whether the frontend shows variant selection
    * at all, and which values are available to pick from.
    */
   async getVariants(productId) {
     const variants = await prisma.productVariant.findMany({
       where: { product_id: productId, is_active: true },
-      include: { stock_levels: true, variation_value: { include: { variation: true } } },
-      orderBy: { variation_value: { value: 'asc' } },
+      include: VARIANT_INCLUDE,
+      orderBy: { sku: 'asc' },
     });
     const product = await prisma.product.findUnique({ where: { id: productId } });
     return variants.map((v) => this.variantToDTO(v, product));
   }
 
+  /** Adds ONE more combination to a product that already has Variations
+   *  attached — the "add another value later" flow, distinct from the
+   *  batch-creation path in create()/allocateVariantsInTx above. */
   async createVariant(productId, data) {
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findUnique({ where: { id: productId }, include: { variation_axes: true } });
     if (!product) {
       const err = new Error('Product not found');
       err.status = 404;
       throw err;
     }
-    if (!product.variation_id) {
-      const err = new Error('Attach a Variation to this product before adding values.');
-      err.status = 400;
-      throw err;
-    }
-    const variationValueId = data.variationValueId || data.variation_value_id;
-    const value = await prisma.variationValue.findUnique({ where: { id: variationValueId } });
-    if (!value || value.variation_id !== product.variation_id) {
-      const err = new Error('That value does not belong to this product\'s Variation.');
+    if (product.variation_axes.length === 0) {
+      const err = new Error('Attach at least one Variation to this product before adding combinations.');
       err.status = 400;
       throw err;
     }
 
-    const warehouseId = await getDefaultWarehouseId();
+    const valueIds = Array.isArray(data.variationValueIds) ? data.variationValueIds : (data.variationValueIds ? [data.variationValueIds] : []);
+    const axisIds = product.variation_axes.map((a) => a.variation_id);
+    if (valueIds.length !== axisIds.length) {
+      const err = new Error(`This product needs exactly one value for each of its ${axisIds.length} attached Variation(s).`);
+      err.status = 400;
+      throw err;
+    }
+    const values = await prisma.variationValue.findMany({ where: { id: { in: valueIds } } });
+    const axesUsed = new Set();
+    for (const value of values) {
+      if (!axisIds.includes(value.variation_id)) {
+        const err = new Error('One of the picked values does not belong to this product\'s attached Variations.');
+        err.status = 400;
+        throw err;
+      }
+      if (axesUsed.has(value.variation_id)) {
+        const err = new Error('A combination can only use one value per Variation — not two of the same axis.');
+        err.status = 400;
+        throw err;
+      }
+      axesUsed.add(value.variation_id);
+    }
+    if (values.length !== valueIds.length) {
+      const err = new Error('One of the picked values no longer exists.');
+      err.status = 400;
+      throw err;
+    }
+
+    await this.assertNoDuplicateVariantCombination(productId, valueIds);
+
+    const warehouseId = data.warehouseId || data.warehouse_id ? (data.warehouseId || data.warehouse_id) : await getDefaultWarehouseId();
     const initialStock = Number(data.stock ?? 0);
-    // A variant's own cost, if given, otherwise it starts from the
+    // A combination's own cost, if given, otherwise it starts from the
     // product's base cost — either way, this only seeds the opening cost
-    // lot; ongoing cost differences by value come from purchases scoped
-    // to this variant, same as batch costing.
+    // lot; ongoing cost differences by combination come from purchases
+    // scoped to this variant, same as batch costing.
     const costPrice = data.cost_price !== undefined && data.cost_price !== '' ? Number(data.cost_price) : Number(product.cost_price);
     const priceOverride =
       data.priceOverride !== undefined && data.priceOverride !== null && data.priceOverride !== ''
         ? Number(data.priceOverride)
         : null;
 
-    const variant = await prisma.productVariant.create({
-      data: {
-        product_id: productId,
-        variation_value_id: variationValueId,
-        sku: data.sku,
-        price_override: priceOverride,
-      },
-    });
+    const variant = await prisma.$transaction(async (tx) => {
+      const created = await tx.productVariant.create({
+        data: { product_id: productId, sku: data.sku, price_override: priceOverride },
+      });
+      await tx.productVariantValue.createMany({
+        data: valueIds.map((variationValueId) => ({ variant_id: created.id, variation_value_id: variationValueId })),
+      });
 
-    if (initialStock > 0) {
-      await prisma.stockLevel.create({
-        data: { product_id: productId, variant_id: variant.id, warehouse_id: warehouseId, quantity: initialStock },
-      });
-      await prisma.stockMovement.create({
-        data: {
-          product_id: productId,
-          variant_id: variant.id,
-          warehouse_id: warehouseId,
-          movement_type: 'STOCK_IN',
-          quantity: initialStock,
-          reference_note: 'Initial stock for new variant',
-          created_by: data.created_by,
-        },
-      });
-      await prisma.costLot.create({
-        data: {
-          product_id: productId,
-          variant_id: variant.id,
-          warehouse_id: warehouseId,
-          unit_cost: costPrice,
-          quantity_received: initialStock,
-          quantity_remaining: initialStock,
-        },
-      });
-    }
+      if (initialStock > 0) {
+        await tx.stockLevel.create({
+          data: { product_id: productId, variant_id: created.id, warehouse_id: warehouseId, quantity: initialStock },
+        });
+        await tx.stockMovement.create({
+          data: {
+            product_id: productId,
+            variant_id: created.id,
+            warehouse_id: warehouseId,
+            movement_type: 'STOCK_IN',
+            quantity: initialStock,
+            reference_note: 'Initial stock for new variant',
+            created_by: data.created_by,
+          },
+        });
+        await tx.costLot.create({
+          data: {
+            product_id: productId,
+            variant_id: created.id,
+            warehouse_id: warehouseId,
+            unit_cost: costPrice,
+            quantity_received: initialStock,
+            quantity_remaining: initialStock,
+          },
+        });
+      }
+      return created;
+    });
 
     const refreshedProduct = await prisma.product.findUnique({ where: { id: productId } });
-    const full = await prisma.productVariant.findUnique({
-      where: { id: variant.id },
-      include: { stock_levels: true, variation_value: { include: { variation: true } } },
-    });
+    const full = await prisma.productVariant.findUnique({ where: { id: variant.id }, include: VARIANT_INCLUDE });
     return this.variantToDTO(full, refreshedProduct);
   }
 
@@ -665,7 +847,7 @@ class ProductsService {
               : Number(data.priceOverride ?? data.price_override),
         }),
       },
-      include: { stock_levels: true, variation_value: { include: { variation: true } } },
+      include: VARIANT_INCLUDE,
     });
     const product = await prisma.product.findUnique({ where: { id: existing.product_id } });
     return this.variantToDTO(updated, product);
@@ -679,31 +861,43 @@ class ProductsService {
       await prisma.productVariant.update({ where: { id: variantId }, data: { is_active: false } });
       return;
     }
-    await prisma.productVariant.delete({ where: { id: variantId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.productVariantValue.deleteMany({ where: { variant_id: variantId } });
+      await tx.productVariant.delete({ where: { id: variantId } });
+    });
   }
 
   variantToDTO(variant, product) {
     const stock = (variant.stock_levels || []).reduce((sum, sl) => sum + Number(sl.quantity), 0);
-    const value = variant.variation_value;
+    const linkedValues = variant.values || [];
+    // A variant's price adjustment is the SUM across every linked value
+    // — e.g. "Red" +0 and "Large" +200 combine to +200 — this is the
+    // core of multi-axis pricing, replacing the old single-value lookup.
     const priceAdjustment =
       variant.price_override !== null && variant.price_override !== undefined
         ? Number(variant.price_override)
-        : Number(value?.price_adjustment ?? 0);
+        : linkedValues.reduce((sum, pv) => sum + Number(pv.variation_value?.price_adjustment ?? 0), 0);
     return {
       id: variant.id,
       productId: variant.product_id,
-      variationValueId: variant.variation_value_id,
-      // Display name — e.g. "Red" — sourced from the shared global value,
-      // never stored redundantly on the variant itself.
-      name: value?.value ?? '',
-      variationName: value?.variation?.name ?? '',
+      variationValueIds: linkedValues.map((pv) => pv.variation_value_id),
+      // Display name — e.g. "Red / Medium" — built from every linked
+      // value's own name, joined for readability, never stored
+      // redundantly on the variant itself.
+      name: linkedValues.map((pv) => pv.variation_value?.value ?? '').filter(Boolean).join(' / '),
+      values: linkedValues.map((pv) => ({
+        variationValueId: pv.variation_value_id,
+        variationId: pv.variation_value?.variation_id,
+        variationName: pv.variation_value?.variation?.name ?? '',
+        value: pv.variation_value?.value ?? '',
+      })),
       sku: variant.sku,
       priceOverride:
         variant.price_override !== null && variant.price_override !== undefined ? Number(variant.price_override) : null,
       priceAdjustment,
-      // The actual sellable price for this specific value — base product
-      // price plus its price adjustment (or override). Computed here so
-      // the frontend never has to duplicate this math.
+      // The actual sellable price for this specific combination — base
+      // product price plus its combined price adjustment (or override).
+      // Computed here so the frontend never has to duplicate this math.
       price: product ? Number(product.retail_price) + priceAdjustment : null,
       wholesalePrice: product ? Number(product.wholesale_price) + priceAdjustment : null,
       image: variant.image_url,
@@ -728,18 +922,23 @@ class ProductsService {
 
     // No real transaction history — safe to hard-delete. But every
     // dependent stock record (levels, movements, cost lots, batches,
-    // transfers, variants) has a RESTRICT foreign key back to this
-    // product, so Postgres blocks the delete until those are cleared
-    // first — there's no real history for any of them to lose here,
-    // unlike invoices/purchases/kits above. All inside one transaction
-    // so a partial cleanup can't happen.
+    // transfers, variants, variant values, variation axes) has a
+    // RESTRICT foreign key back to this product, so Postgres blocks the
+    // delete until those are cleared first — there's no real history for
+    // any of them to lose here, unlike invoices/purchases/kits above. All
+    // inside one transaction so a partial cleanup can't happen.
     await prisma.$transaction(async (tx) => {
       await tx.stockTransfer.deleteMany({ where: { product_id: id } });
       await tx.stockMovement.deleteMany({ where: { product_id: id } });
       await tx.costLot.deleteMany({ where: { product_id: id } });
       await tx.stockLevel.deleteMany({ where: { product_id: id } });
       await tx.batch.deleteMany({ where: { product_id: id } });
+      const variantIds = (await tx.productVariant.findMany({ where: { product_id: id }, select: { id: true } })).map((v) => v.id);
+      if (variantIds.length > 0) {
+        await tx.productVariantValue.deleteMany({ where: { variant_id: { in: variantIds } } });
+      }
       await tx.productVariant.deleteMany({ where: { product_id: id } });
+      await tx.productVariationAxis.deleteMany({ where: { product_id: id } });
       await tx.product.delete({ where: { id } });
     });
   }
@@ -760,6 +959,8 @@ class ProductsService {
       marginAlert = Math.abs(actualMarginPct - targetMarginPct) > 2; // >2pt drift
     }
 
+    const axes = product.variation_axes || [];
+
     return {
       id: product.id,
       name: product.name,
@@ -770,8 +971,8 @@ class ProductsService {
       price: retailPrice,
       wholesalePrice: Number(product.wholesale_price),
       costPrice: Number(product.cost_price),
-      hsnCode: product.hsn_code,
-      gstRate: Number(product.gst_rate),
+      taxCode: product.tax_code,
+      taxRate: Number(product.tax_rate),
       discountType: product.discount_type,
       discountValue: Number(product.discount_value),
       targetMarginPct,
@@ -782,10 +983,14 @@ class ProductsService {
       image: product.image_url,
       barcode: product.barcode,
       isActive: product.is_active,
-      baseUom: product.base_uom,
+      baseUomId: product.base_uom_id,
+      baseUom: product.base_uom?.name ?? null,
+      baseUomAbbreviation: product.base_uom?.abbreviation ?? null,
       // FR: Flexible UoM Conversion — coveragePerBox (sq ft per box) powers
       // the Area-to-Box calculator; conversionFactor is a generic
-      // base-units-per-alternate-unit ratio for LENGTH/BUNDLE products.
+      // base-units-per-alternate-unit ratio. Both optional — meaningful
+      // mainly for tile/flooring-style products, harmless (null) for
+      // anything else.
       coveragePerBox: product.coverage_per_box !== null && product.coverage_per_box !== undefined ? Number(product.coverage_per_box) : null,
       conversionFactor: product.conversion_factor !== null && product.conversion_factor !== undefined ? Number(product.conversion_factor) : null,
       // FR: Batch & Lot Tracking — when true, this product must be sold
@@ -793,11 +998,13 @@ class ProductsService {
       isBatchTracked: product.is_batch_tracked,
       // Variation attachment — a deliberate customer choice, distinct
       // from batch tracking (see GET /products/:id/variants). A product
-      // can be both variant- and batch-tracked at once. `isVariantTracked`
-      // is derived, not stored — true whenever a Variation is attached.
-      variationId: product.variation_id,
-      variationName: product.variation?.name || null,
-      isVariantTracked: Boolean(product.variation_id),
+      // can use MULTIPLE Variations at once now (e.g. Color AND Size),
+      // can be both variant- and batch-tracked at once, and
+      // `isVariantTracked` is derived, not stored — true whenever at
+      // least one Variation is attached.
+      variationIds: axes.map((a) => a.variation_id),
+      variationNames: axes.map((a) => a.variation?.name).filter(Boolean),
+      isVariantTracked: axes.length > 0,
       length: product.length !== null && product.length !== undefined ? Number(product.length) : null,
       width: product.width !== null && product.width !== undefined ? Number(product.width) : null,
       dimensionUnit: product.dimension_unit,
@@ -806,5 +1013,4 @@ class ProductsService {
 }
 
 module.exports = new ProductsService();
-
 

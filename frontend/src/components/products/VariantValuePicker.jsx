@@ -4,55 +4,89 @@ import { formatCurrency } from '../../utils/formatters'
 import { variationService } from '../../services/variationService'
 
 /**
- * Lets the admin pick which of a Variation's already-defined values apply
- * to a brand-new product (no id yet), and set SKU/stock for each one
- * picked — same role VariantDraftBuilder used to play, except the values
- * themselves are never typed here; they're pulled from whichever
- * Variation was selected in the dropdown above (see VariationsPage.jsx,
- * where they're actually defined/managed).
+ * Lets the admin build the actual stocked combinations for a brand-new
+ * product (no id yet) that uses one or more Variations at once — e.g.
+ * "Red, Medium" from Color + Size. One value is picked per attached
+ * Variation, then "Add Combination" turns that into a real row with its
+ * own SKU/stock/price override, the same way a real retailer builds out
+ * a size/color grid — not every theoretical combination is created,
+ * only the ones actually stocked.
  *
- * `picks` is a map of variationValueId -> { sku, stock, priceOverride },
- * handed to the parent form so it can send it all to the server in one
- * request alongside the product itself — see ProductFormModal's
- * handleSubmit.
+ * `picks` is an ARRAY of { valueIds: [...], sku, stock, priceOverride },
+ * one entry per real combination, handed to the parent form so it can
+ * send the whole list to the server in one request alongside the
+ * product itself — see ProductFormModal's handleSubmit.
  */
-export default function VariantValuePicker({ variationId, picks, onChange, targetStock }) {
-  const [variation, setVariation] = useState(null)
+export default function VariantValuePicker({ variationIds, picks, onChange, targetStock }) {
+  const [variations, setVariations] = useState([])
   const [isLoading, setIsLoading] = useState(true)
+  const [current, setCurrent] = useState({}) // variationId -> valueId, the in-progress combination
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!variationId) return
+    if (!variationIds || variationIds.length === 0) return
     setIsLoading(true)
-    variationService
-      .getById(variationId)
-      .then((res) => setVariation(res.data.data))
+    Promise.all(variationIds.map((id) => variationService.getById(id).then((res) => res.data.data)))
+      .then((results) => {
+        setVariations(results)
+        setCurrent({})
+      })
       .finally(() => setIsLoading(false))
-  }, [variationId])
+  }, [variationIds])
 
-  const allocated = Object.values(picks).reduce((sum, p) => sum + Number(p.stock || 0), 0)
+  const allocated = picks.reduce((sum, p) => sum + Number(p.stock || 0), 0)
   const target = targetStock === '' ? 0 : Number(targetStock)
   const remaining = target - allocated
-  const isBalanced = remaining === 0 && Object.keys(picks).length > 0
+  const isBalanced = remaining === 0 && picks.length > 0
 
-  function togglePick(value, checked) {
-    const next = { ...picks }
-    if (checked) {
-      next[value.id] = { sku: '', stock: '', priceOverride: '' }
-    } else {
-      delete next[value.id]
-    }
-    onChange(next)
+  function comboKey(valueIds) {
+    return [...valueIds].sort().join('|')
+  }
+
+  function addCombination() {
     setError('')
+    const valueIds = variations.map((v) => current[v.id]).filter(Boolean)
+    if (valueIds.length !== variations.length) {
+      setError(`Pick a value for every Variation (${variations.map((v) => v.name).join(', ')}) before adding.`)
+      return
+    }
+    const key = comboKey(valueIds)
+    if (picks.some((p) => comboKey(p.valueIds) === key)) {
+      setError('This exact combination is already added below.')
+      return
+    }
+    onChange([...picks, { valueIds, sku: '', stock: '', priceOverride: '' }])
+    setCurrent({})
   }
 
-  function updatePick(valueId, field, val) {
-    onChange({ ...picks, [valueId]: { ...picks[valueId], [field]: val } })
+  function updatePick(index, field, val) {
+    const next = [...picks]
+    next[index] = { ...next[index], [field]: val }
+    onChange(next)
   }
 
-  if (!variationId) return null
+  function removePick(index) {
+    onChange(picks.filter((_, i) => i !== index))
+  }
+
+  function labelFor(variation, valueId) {
+    const value = variation.values.find((v) => v.id === valueId)
+    if (!value) return ''
+    return `${value.value}${variation.valueType === 'MEASUREMENT' && variation.unit ? ` ${variation.unit}` : ''}`
+  }
+
+  function comboLabel(valueIds) {
+    return variations
+      .map((v, i) => labelFor(v, valueIds[i] ?? valueIds.find((id) => v.values.some((val) => val.id === id))))
+      .filter(Boolean)
+      .join(' / ')
+  }
+
+  if (!variationIds || variationIds.length === 0) return null
   if (isLoading) return <p className="text-sm text-ink-muted dark:text-dark-muted">Loading values…</p>
-  if (!variation) return null
+  if (variations.length === 0) return null
+
+  const missingValues = variations.filter((v) => v.values.length === 0)
 
   return (
     <div className="rounded-lg border border-line dark:border-dark-border p-3">
@@ -60,7 +94,9 @@ export default function VariantValuePicker({ variationId, picks, onChange, targe
         <span className="section-icon bg-amber-light dark:bg-amber/15 text-amber-dark dark:text-amber">
           <Icon name="categories" className="h-3.5 w-3.5" />
         </span>
-        <p className="text-xs font-semibold text-ink-muted dark:text-dark-muted uppercase tracking-wide">{variation.name} options</p>
+        <p className="text-xs font-semibold text-ink-muted dark:text-dark-muted uppercase tracking-wide">
+          {variations.map((v) => v.name).join(' + ')} combinations
+        </p>
       </div>
 
       <div
@@ -73,67 +109,87 @@ export default function VariantValuePicker({ variationId, picks, onChange, targe
         }`}
       >
         Allocated {allocated} / {target}
-        {remaining > 0 && ` — ${remaining} unit(s) still need a value picked`}
+        {remaining > 0 && ` — ${remaining} unit(s) still need a combination picked`}
         {remaining < 0 && ` — ${Math.abs(remaining)} unit(s) over Stock Quantity above`}
         {isBalanced && ' — fully allocated'}
       </div>
 
-      {variation.values.length === 0 ? (
+      {missingValues.length > 0 ? (
         <p className="text-sm text-ink-muted dark:text-dark-muted">
-          This variation has no values yet — add some on the Variations page first.
+          {missingValues.map((v) => v.name).join(', ')} — no values yet. Add some on the Variations page first.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {variation.values.map((value) => {
-            const picked = picks[value.id]
-            const label = `${value.value}${variation.valueType === 'MEASUREMENT' && variation.unit ? ` ${variation.unit}` : ''}`
-            return (
-              <li key={value.id} className="bg-paper-dim dark:bg-dark-card2 rounded-lg p-2.5">
-                <label className="flex items-center gap-2 text-sm text-ink dark:text-dark-text cursor-pointer mb-1">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(picked)}
-                    onChange={(e) => togglePick(value, e.target.checked)}
-                    className="rounded border-line dark:border-dark-border text-amber focus:ring-amber"
-                  />
-                  <span className="font-medium">{label}</span>
-                  {Number(value.priceAdjustment) !== 0 && (
-                    <span className="text-xs text-ink-muted dark:text-dark-muted">
-                      ({value.priceAdjustment > 0 ? '+' : ''}
-                      {formatCurrency(value.priceAdjustment)})
-                    </span>
-                  )}
-                </label>
-                {picked && (
-                  <div className="grid grid-cols-3 gap-2 mt-2 pl-6">
+        <>
+          <div className="flex flex-wrap items-end gap-2 mb-3">
+            {variations.map((v) => (
+              <div key={v.id} className="flex-1 min-w-[120px]">
+                <label className="label-text !mb-1" htmlFor={`combo-${v.id}`}>{v.name}</label>
+                <select
+                  id={`combo-${v.id}`}
+                  className="input-field !py-1.5 text-sm"
+                  value={current[v.id] || ''}
+                  onChange={(e) => setCurrent((prev) => ({ ...prev, [v.id]: e.target.value }))}
+                >
+                  <option value="">Pick {v.name}…</option>
+                  {v.values.map((value) => (
+                    <option key={value.id} value={value.id}>
+                      {labelFor(v, value.id)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <button type="button" className="btn-outline !py-1.5 text-sm shrink-0" onClick={addCombination}>
+              + Add Combination
+            </button>
+          </div>
+
+          {picks.length === 0 ? (
+            <p className="text-sm text-ink-muted dark:text-dark-muted">No combinations added yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {picks.map((pick, index) => (
+                <li key={comboKey(pick.valueIds)} className="bg-paper-dim dark:bg-dark-card2 rounded-lg p-2.5">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-ink dark:text-dark-text">{comboLabel(pick.valueIds)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removePick(index)}
+                      className="text-ink-muted dark:text-dark-muted hover:text-rose dark:hover:text-dark-rose"
+                      aria-label="Remove combination"
+                    >
+                      <Icon name="trash" className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
                     <input
                       className="input-field figure !py-1.5 text-sm"
                       placeholder="SKU"
-                      value={picked.sku}
-                      onChange={(e) => updatePick(value.id, 'sku', e.target.value)}
+                      value={pick.sku}
+                      onChange={(e) => updatePick(index, 'sku', e.target.value)}
                     />
                     <input
                       type="number"
                       min="0"
                       className="input-field figure !py-1.5 text-sm"
                       placeholder="Stock"
-                      value={picked.stock}
-                      onChange={(e) => updatePick(value.id, 'stock', e.target.value)}
+                      value={pick.stock}
+                      onChange={(e) => updatePick(index, 'stock', e.target.value)}
                     />
                     <input
                       type="number"
                       step="0.01"
                       className="input-field figure !py-1.5 text-sm"
                       placeholder="Price override"
-                      value={picked.priceOverride}
-                      onChange={(e) => updatePick(value.id, 'priceOverride', e.target.value)}
+                      value={pick.priceOverride}
+                      onChange={(e) => updatePick(index, 'priceOverride', e.target.value)}
                     />
                   </div>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
       {error && <p className="text-xs text-rose dark:text-dark-rose mt-2">{error}</p>}
     </div>

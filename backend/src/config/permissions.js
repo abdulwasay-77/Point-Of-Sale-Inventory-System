@@ -18,7 +18,7 @@ const PERMISSIONS = {
   PRODUCTS_VIEW: 'PRODUCTS_VIEW',
   PRODUCTS_EDIT: 'PRODUCTS_EDIT', // create + update
   PRODUCTS_DELETE: 'PRODUCTS_DELETE',
-  // Pricing fields specifically (GST rate, discount, target margin, cost
+  // Pricing fields specifically (tax rate, discount, target margin, cost
   // price) — deliberately separate from PRODUCTS_EDIT so a role like
   // Warehouse Staff can still edit ordinary product details without being
   // able to touch tax/pricing. Admin-only by default.
@@ -30,6 +30,10 @@ const PERMISSIONS = {
   // Variations (e.g. Color, Diameter) — reusable, defined once and
   // reused across products, managed on their own page.
   VARIATIONS_MANAGE: 'VARIATIONS_MANAGE',
+  // Units of measure (e.g. Piece, Box, Kg) — was a fixed enum, now a
+  // business-managed list, same "define once, reuse everywhere" shape
+  // as Variations above.
+  UNITS_MANAGE: 'UNITS_MANAGE',
   // Customers
   CUSTOMERS_MANAGE: 'CUSTOMERS_MANAGE',
   // Suppliers
@@ -87,10 +91,11 @@ const PERMISSION_CATALOG = [
   { key: PERMISSIONS.PRODUCTS_VIEW, label: 'View products', group: 'Products' },
   { key: PERMISSIONS.PRODUCTS_EDIT, label: 'Create / edit products', group: 'Products' },
   { key: PERMISSIONS.PRODUCTS_DELETE, label: 'Delete products', group: 'Products' },
-  { key: PERMISSIONS.PRICING_MANAGE, label: 'Edit GST, discount & pricing', group: 'Products' },
+  { key: PERMISSIONS.PRICING_MANAGE, label: 'Edit tax rate, discount & pricing', group: 'Products' },
   { key: PERMISSIONS.BARCODES_MANAGE, label: 'Generate & print barcode labels', group: 'Products' },
   { key: PERMISSIONS.CATEGORIES_MANAGE, label: 'Manage categories', group: 'Products' },
   { key: PERMISSIONS.VARIATIONS_MANAGE, label: 'Manage variations (e.g. Color, Diameter)', group: 'Products' },
+  { key: PERMISSIONS.UNITS_MANAGE, label: 'Manage units of measure (e.g. Piece, Box, Kg)', group: 'Products' },
   { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', group: 'Inventory' },
   { key: PERMISSIONS.KITS_MANAGE, label: 'Manage kits & bundles', group: 'Inventory' },
   { key: PERMISSIONS.WAREHOUSES_MANAGE, label: 'Manage warehouses', group: 'Inventory' },

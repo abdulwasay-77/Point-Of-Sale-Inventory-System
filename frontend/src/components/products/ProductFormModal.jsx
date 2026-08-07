@@ -3,6 +3,8 @@ import Modal from '../common/Modal'
 import Icon from '../common/Icon'
 import { categoryService } from '../../services/categoryService'
 import { variationService } from '../../services/variationService'
+import { unitService } from '../../services/unitService'
+import { warehouseService } from '../../services/warehouseService'
 import { settingsService } from '../../services/settingsService'
 import { productService } from '../../services/productService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
@@ -15,7 +17,7 @@ import VariantValuePicker from './VariantValuePicker'
  * optional image file can be sent as multipart/form-data) and hands it to
  * the parent's onSave, which calls productService.create/update.
  *
- * Pricing section (wholesale/cost price, GST rate, discount, target
+ * Pricing section (wholesale/cost price, tax rate, discount, target
  * margin) is only shown to users with PRICING_MANAGE (Admin by default —
  * see config/permissions.js on the backend, which independently enforces
  * this too; hiding it here is a UX nicety, not the actual security
@@ -33,11 +35,13 @@ import VariantValuePicker from './VariantValuePicker'
  * Barcode is a distinct generated code (not the SKU) — see the Generate
  * button next to that field, gated behind BARCODES_MANAGE (Admin only).
  *
- * Variation: a product can attach one Variation (Color, Diameter, ...) —
- * defined once, independently, on the Variations page (VariationsPage.jsx)
- * and just picked from a dropdown here, the same way Category already
- * works. Nothing about a Variation's name or values is ever created from
- * this form.
+ * Variations: a product can attach MULTIPLE Variations at once (e.g. both
+ * Color and Size) — each defined once, independently, on the Variations
+ * page (VariationsPage.jsx) and picked from checkboxes here, the same way
+ * Category already works from a dropdown. Nothing about a Variation's
+ * name or values is ever created from this form. Picking more than one
+ * axis is what makes a real "Red, Medium" combined variant possible — see
+ * VariantValuePicker (new products) / VariantManager (existing ones).
  */
 export default function ProductFormModal({ isOpen, onClose, onSave, initialValues }) {
   const { has } = usePermissions()
@@ -46,11 +50,13 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
 
   const [categories, setCategories] = useState([])
   const [variations, setVariations] = useState([])
-  // Settings → Sales Defaults → Default GST Rate — pre-fills GST for a
-  // brand-new product (see the effects below); an existing product keeps
-  // whatever GST it was actually saved with, never silently overwritten
-  // by a later change to the business-wide default.
-  const [defaultGstRate, setDefaultGstRate] = useState(null)
+  const [units, setUnits] = useState([])
+  const [warehouses, setWarehouses] = useState([])
+  // Settings → Sales Defaults → Default Tax Rate — pre-fills tax rate for
+  // a brand-new product (see the effects below); an existing product
+  // keeps whatever rate it was actually saved with, never silently
+  // overwritten by a later change to the business-wide default.
+  const [defaultTaxRate, setDefaultTaxRate] = useState(null)
   const [form, setForm] = useState({
     name: '',
     sku: '',
@@ -58,17 +64,19 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     price: '',
     wholesalePrice: '',
     costPrice: '',
-    gstRate: '',
+    taxRate: '',
+    taxCode: '',
     discountType: 'PERCENTAGE',
     discountValue: '',
     targetMarginPct: '',
     stock: '',
     barcode: '',
-    baseUom: 'PIECE',
+    baseUomId: '',
+    warehouseId: '',
     coveragePerBox: '',
     conversionFactor: '',
     isBatchTracked: false,
-    variationId: '',
+    variationIds: [],
     length: '',
     width: '',
     dimensionUnit: 'ft',
@@ -83,11 +91,19 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   // isOpen effect below).
   const [priceTouched, setPriceTouched] = useState(false)
   const [wholesaleTouched, setWholesaleTouched] = useState(false)
-  // Values picked for a brand-new product — see VariantValuePicker. Keyed
-  // by variationValueId -> { sku, stock, priceOverride }. Irrelevant once
-  // editing an existing product (that uses VariantManager, which talks to
-  // the API directly instead).
-  const [picks, setPicks] = useState({})
+  // Coverage/conversion tracking — optional, domain-specific (mainly
+  // tile/flooring-style products). Used to be shown only when a fixed
+  // enum's Unit of Measure equalled "BOX"/"LENGTH"/"BUNDLE"; now that
+  // units are a free-form business-managed list, that string match no
+  // longer makes sense, so this is its own explicit opt-in toggle
+  // instead, independent of which unit is picked.
+  const [enableCoverageTracking, setEnableCoverageTracking] = useState(false)
+  // Combinations picked for a brand-new product — see
+  // VariantValuePicker. An ARRAY of { valueIds: [...], sku, stock,
+  // priceOverride }, one entry per real stocked combination (e.g. "Red,
+  // Medium"). Irrelevant once editing an existing product (that uses
+  // VariantManager, which talks to the API directly instead).
+  const [picks, setPicks] = useState([])
 
   useEffect(() => {
     if (isOpen) {
@@ -99,10 +115,18 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
         .getAll()
         .then((res) => setVariations(res.data.data))
         .catch(() => setVariations([]))
+      unitService
+        .getAll()
+        .then((res) => setUnits(res.data.data))
+        .catch(() => setUnits([]))
+      warehouseService
+        .getAll()
+        .then((res) => setWarehouses(res.data.data))
+        .catch(() => setWarehouses([]))
       settingsService
         .get()
-        .then((res) => setDefaultGstRate(res.data.data.defaultGstRate))
-        .catch(() => setDefaultGstRate(null))
+        .then((res) => setDefaultTaxRate(res.data.data.defaultTaxRate))
+        .catch(() => setDefaultTaxRate(null))
     }
   }, [isOpen])
 
@@ -120,21 +144,26 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
         // an in-progress async fetch can never wipe other fields the
         // admin has already started typing. Existing product: always
         // its own saved rate, never overridden.
-        gstRate: initialValues?.gstRate ?? '',
+        taxRate: initialValues?.taxRate ?? '',
+        taxCode: initialValues?.taxCode || '',
         discountType: initialValues?.discountType || 'PERCENTAGE',
         discountValue: initialValues?.discountValue ?? '',
         targetMarginPct: initialValues?.targetMarginPct ?? '',
         stock: initialValues?.stock ?? '',
         barcode: initialValues?.barcode || '',
-        baseUom: initialValues?.baseUom || 'PIECE',
+        baseUomId: initialValues?.baseUomId || '',
+        warehouseId: '',
         coveragePerBox: initialValues?.coveragePerBox ?? '',
         conversionFactor: initialValues?.conversionFactor ?? '',
         isBatchTracked: initialValues?.isBatchTracked || false,
-        variationId: initialValues?.variationId || '',
+        variationIds: initialValues?.variationIds || [],
         length: initialValues?.length ?? '',
         width: initialValues?.width ?? '',
         dimensionUnit: initialValues?.dimensionUnit || 'ft',
       })
+      setEnableCoverageTracking(
+        Boolean(initialValues?.coveragePerBox || initialValues?.conversionFactor),
+      )
       setImagePreview(initialValues?.image ? toImageUrl(initialValues.image) : null)
       setImageFile(null)
       setErrors({})
@@ -144,19 +173,28 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
       // "untouched", so the very first cost+margin entry can auto-fill.
       setPriceTouched(Boolean(initialValues))
       setWholesaleTouched(Boolean(initialValues))
-      setPicks({})
+      setPicks([])
     }
   }, [isOpen, initialValues])
 
-  // Fills GST from Settings once it's loaded — separate from the form
-  // reset above on purpose, so a slow settings fetch can never wipe out
-  // fields the admin already started typing. Only touches gstRate, and
-  // only while it's still untouched (blank) on a brand-new product.
+  // Fills tax rate from Settings once it's loaded — separate from the
+  // form reset above on purpose, so a slow settings fetch can never wipe
+  // out fields the admin already started typing. Only touches taxRate,
+  // and only while it's still untouched (blank) on a brand-new product.
   useEffect(() => {
-    if (isOpen && !initialValues && defaultGstRate !== null) {
-      setForm((prev) => (prev.gstRate === '' ? { ...prev, gstRate: String(defaultGstRate) } : prev))
+    if (isOpen && !initialValues && defaultTaxRate !== null) {
+      setForm((prev) => (prev.taxRate === '' ? { ...prev, taxRate: String(defaultTaxRate) } : prev))
     }
-  }, [isOpen, initialValues, defaultGstRate])
+  }, [isOpen, initialValues, defaultTaxRate])
+
+  // Default the unit-of-measure dropdown to the first loaded unit, if
+  // nothing is selected yet (create mode) — same pattern as the category
+  // default-fill below.
+  useEffect(() => {
+    if (isOpen && !form.baseUomId && units.length > 0) {
+      setForm((prev) => (prev.baseUomId ? prev : { ...prev, baseUomId: units[0].id }))
+    }
+  }, [isOpen, units]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scanning a barcode while this form is open fills the Barcode field
   // directly — handy for onboarding a new product that already has a
@@ -240,13 +278,13 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     }
   }
 
-  // True only once the product *actually* has a Variation attached in the
+  // True only once the product *actually* has Variations attached in the
   // database (not just selected in this session) — this is what gates
   // whether Stock Quantity is still a real, editable field vs. read-only,
-  // and whether values can be managed live via the API yet. See the
+  // and whether combinations can be managed live via the API yet. See the
   // render block below and the VariantManager/VariantValuePicker split.
-  const isSavedVariantProduct = Boolean(initialValues?.id && initialValues?.variationId)
-  const isNewVariantProduct = Boolean(form.variationId) && !initialValues?.id
+  const isSavedVariantProduct = Boolean(initialValues?.id && initialValues?.variationIds?.length > 0)
+  const isNewVariantProduct = form.variationIds.length > 0 && !initialValues?.id
 
   // Same idea as the Variation gating above, but for Batch tracking: a
   // batch-tracked product's stock must always come in through a specific
@@ -277,19 +315,18 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
       if (form.stock === '' || Number(form.stock) < 0) next.stock = 'Enter a valid stock quantity.'
     }
     if (isNewVariantProduct && form.stock !== '' && Number(form.stock) >= 0) {
-      const pickList = Object.entries(picks)
-      const allocated = pickList.reduce((sum, [, p]) => sum + Number(p.stock || 0), 0)
-      if (pickList.length === 0) {
-        next.variants = 'Pick at least one value — each unit of stock needs to belong to a value.'
-      } else if (pickList.some(([, p]) => !p.sku.trim())) {
-        next.variants = 'Every picked value needs its own SKU.'
+      const allocated = picks.reduce((sum, p) => sum + Number(p.stock || 0), 0)
+      if (picks.length === 0) {
+        next.variants = 'Add at least one combination — each unit of stock needs to belong to one.'
+      } else if (picks.some((p) => !p.sku.trim())) {
+        next.variants = 'Every added combination needs its own SKU.'
       } else if (allocated !== Number(form.stock)) {
-        next.variants = `Stock Quantity (${form.stock}) must exactly match the total stock across all picked values (currently ${allocated}).`
+        next.variants = `Stock Quantity (${form.stock}) must exactly match the total stock across all added combinations (currently ${allocated}).`
       }
     }
 
-    if (canManagePricing && form.gstRate !== '' && (Number(form.gstRate) < 0 || Number(form.gstRate) > 100)) {
-      next.gstRate = 'GST rate must be between 0 and 100.'
+    if (canManagePricing && form.taxRate !== '' && (Number(form.taxRate) < 0 || Number(form.taxRate) > 100)) {
+      next.taxRate = 'Tax rate must be between 0 and 100.'
     }
     if (canManagePricing && form.discountValue !== '' && Number(form.discountValue) < 0) {
       next.discountValue = 'Discount cannot be negative.'
@@ -308,32 +345,34 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     if (form.categoryId) formData.append('categoryId', form.categoryId)
     formData.append('price', form.price)
     if (form.barcode.trim()) formData.append('barcode', form.barcode.trim())
-    formData.append('base_uom', form.baseUom)
-    if (form.coveragePerBox !== '') formData.append('coverage_per_box', form.coveragePerBox)
-    if (form.conversionFactor !== '') formData.append('conversion_factor', form.conversionFactor)
+    formData.append('base_uom_id', form.baseUomId)
+    if (enableCoverageTracking && form.coveragePerBox !== '') formData.append('coverage_per_box', form.coveragePerBox)
+    if (enableCoverageTracking && form.conversionFactor !== '') formData.append('conversion_factor', form.conversionFactor)
     formData.append('is_batch_tracked', form.isBatchTracked ? 'true' : 'false')
-    formData.append('variationId', form.variationId || '')
+    formData.append('variationIds', JSON.stringify(form.variationIds))
+    if (form.warehouseId) formData.append('warehouseId', form.warehouseId)
     if (form.length !== '') formData.append('length', form.length)
     if (form.width !== '') formData.append('width', form.width)
     if (form.length !== '' || form.width !== '') formData.append('dimension_unit', form.dimensionUnit)
 
     // For an already-saved variant product, Stock Quantity is purely
     // informational (see validate()) — every real unit lives on a picked
-    // value, managed below via VariantManager, not this field — so it's
-    // left out of the request entirely rather than sent as a number the
-    // backend would just ignore. (An existing product where a Variation
-    // was *just* picked this session still needs to send `stock` — the
-    // backend requires it to be 0 before the attachment itself can be
-    // saved.)
+    // combination, managed below via VariantManager, not this field — so
+    // it's left out of the request entirely rather than sent as a number
+    // the backend would just ignore. (An existing product where
+    // Variations were *just* picked this session still needs to send
+    // `stock` — the backend requires it to be 0 before the attachment
+    // itself can be saved.)
     if (!isSavedVariantProduct) {
       formData.append('stock', form.stock)
     }
-    // Brand-new product with a Variation attached: hand off the picked
-    // values so the product and every value are created together in one
-    // request — see VariantValuePicker and products.service.js#create.
+    // Brand-new product with Variations attached: hand off the added
+    // combinations so the product and every combination are created
+    // together in one request — see VariantValuePicker and
+    // products.service.js#create.
     if (isNewVariantProduct) {
-      const variantsPayload = Object.entries(picks).map(([variationValueId, p]) => ({
-        variationValueId,
+      const variantsPayload = picks.map((p) => ({
+        variationValueIds: p.valueIds,
         sku: p.sku,
         stock: p.stock,
         priceOverride: p.priceOverride,
@@ -349,7 +388,8 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     if (canManagePricing) {
       if (form.wholesalePrice !== '') formData.append('wholesale_price', form.wholesalePrice)
       if (form.costPrice !== '') formData.append('cost_price', form.costPrice)
-      if (form.gstRate !== '') formData.append('gst_rate', form.gstRate)
+      if (form.taxRate !== '') formData.append('tax_rate', form.taxRate)
+      if (form.taxCode.trim()) formData.append('tax_code', form.taxCode.trim())
       formData.append('discount_type', form.discountType)
       formData.append('discount_value', form.discountValue === '' ? '0' : form.discountValue)
       formData.append('target_margin_pct', form.targetMarginPct === '' ? '' : form.targetMarginPct)
@@ -504,10 +544,32 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             {errors.stock && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.stock}</p>}
             {isNewVariantProduct && (
               <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
-                This is the total you'll split across picked values below — they must add up to this number exactly.
+                This is the total you'll split across added combinations below — they must add up to this number
+                exactly.
               </p>
             )}
           </div>
+
+          {!isSavedVariantProduct && !isSavedBatchProduct && !isTurningOnBatchTracking && warehouses.length > 1 && (
+            <div>
+              <label className="label-text" htmlFor="prod-warehouse">
+                Warehouse <span className="text-ink-muted dark:text-dark-muted font-normal">— where this stock goes</span>
+              </label>
+              <select
+                id="prod-warehouse"
+                className="input-field"
+                value={form.warehouseId}
+                onChange={(e) => handleChange('warehouseId', e.target.value)}
+              >
+                <option value="">Main warehouse (default)</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {canManagePricing ? (
             <>
@@ -555,21 +617,34 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               </div>
 
               <div>
-                <label className="label-text" htmlFor="prod-gst">
-                  GST Rate (%)
+                <label className="label-text" htmlFor="prod-tax-rate">
+                  Tax Rate (%)
                 </label>
                 <input
-                  id="prod-gst"
+                  id="prod-tax-rate"
                   type="number"
                   min="0"
                   max="100"
                   step="0.01"
                   className="input-field figure"
-                  value={form.gstRate}
-                  onChange={(e) => handleChange('gstRate', e.target.value)}
+                  value={form.taxRate}
+                  onChange={(e) => handleChange('taxRate', e.target.value)}
                   placeholder="e.g. 18"
                 />
-                {errors.gstRate && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.gstRate}</p>}
+                {errors.taxRate && <p className="text-xs text-rose dark:text-dark-rose mt-1">{errors.taxRate}</p>}
+              </div>
+
+              <div>
+                <label className="label-text" htmlFor="prod-tax-code">
+                  Tax Code <span className="text-ink-muted dark:text-dark-muted font-normal">(optional)</span>
+                </label>
+                <input
+                  id="prod-tax-code"
+                  className="input-field figure"
+                  value={form.taxCode}
+                  onChange={(e) => handleChange('taxCode', e.target.value)}
+                  placeholder="e.g. HSN/SAC code, if your region uses one"
+                />
               </div>
 
               <div>
@@ -617,7 +692,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             </>
           ) : (
             <div className="sm:col-span-2 rounded-lg bg-paper-dim dark:bg-dark-card2 px-3 py-2.5 text-xs text-ink-muted dark:text-dark-muted border-t border-line dark:border-dark-border mt-1">
-              GST, wholesale/cost pricing, discount, and margin targets are managed by an admin.
+              Tax, wholesale/cost pricing, discount, and margin targets are managed by an admin.
             </div>
           )}
 
@@ -671,15 +746,15 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             <select
               id="prod-uom"
               className="input-field"
-              value={form.baseUom}
-              onChange={(e) => handleChange('baseUom', e.target.value)}
+              value={form.baseUomId}
+              onChange={(e) => handleChange('baseUomId', e.target.value)}
             >
-              <option value="PIECE">Piece</option>
-              <option value="BOX">Box</option>
-              <option value="SQ_FT">Square Feet</option>
-              <option value="SQ_M">Square Meter</option>
-              <option value="LENGTH">Length</option>
-              <option value="BUNDLE">Bundle</option>
+              {units.length === 0 && <option value="">No units yet — add one under Settings → Units</option>}
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.abbreviation})
+                </option>
+              ))}
             </select>
           </div>
 
@@ -709,25 +784,44 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
           </div>
 
           <div className="sm:col-span-2">
-            <label className="label-text" htmlFor="prod-variation">
-              Variation
-            </label>
-            <select
-              id="prod-variation"
-              className="input-field"
-              value={form.variationId}
-              onChange={(e) => {
-                handleChange('variationId', e.target.value)
-                if (!e.target.value) setPicks({})
-              }}
-            >
-              <option value="">No variation — this product is sold as-is</option>
-              {variations.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
+            <label className="label-text">Variations</label>
+            <p className="text-xs text-ink-muted dark:text-dark-muted mb-1.5">
+              Pick every axis this product varies by at once (e.g. both Color and Size) to build combined
+              combinations like "Red, Medium" below.
+            </p>
+            {variations.length === 0 ? (
+              <p className="text-sm text-ink-muted dark:text-dark-muted bg-paper-dim dark:bg-dark-card2 rounded-lg px-3 py-2">
+                No Variations defined yet — add one on the Variations page first.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-3">
+                {variations.map((v) => (
+                  <label key={v.id} className="flex items-center gap-2 text-sm text-ink dark:text-dark-text cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={isSavedVariantProduct}
+                      checked={form.variationIds.includes(v.id)}
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        setForm((prev) => ({
+                          ...prev,
+                          variationIds: checked ? [...prev.variationIds, v.id] : prev.variationIds.filter((id) => id !== v.id),
+                        }))
+                        setPicks([])
+                      }}
+                      className="rounded border-line dark:border-dark-border text-amber focus:ring-amber disabled:opacity-50"
+                    />
+                    {v.name}
+                  </label>
+                ))}
+              </div>
+            )}
+            {isSavedVariantProduct && (
+              <p className="text-xs text-ink-muted dark:text-dark-muted mt-1">
+                This product already has combinations saved — remove them all from the panel below first to change
+                which Variations it uses.
+              </p>
+            )}
           </div>
 
           <div className="sm:col-span-2">
@@ -770,27 +864,28 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             </div>
           </div>
 
-          {form.variationId && (
+          {form.variationIds.length > 0 && (
             <div className="sm:col-span-2">
               {isSavedVariantProduct ? (
-                // Already has this Variation attached in the database —
-                // safe to manage values live via the API right away.
-                <VariantManager productId={initialValues.id} variationId={initialValues.variationId} />
+                // Already has these Variations attached in the database —
+                // safe to manage combinations live via the API right away.
+                <VariantManager productId={initialValues.id} variationIds={initialValues.variationIds} />
               ) : initialValues?.id ? (
-                // Existing product, but a Variation was only picked here
-                // this session — not saved yet. Values can't be added
-                // live yet: the backend requires Stock Quantity to be 0
-                // before the attachment itself can be saved (see
+                // Existing product, but Variations were only picked here
+                // this session — not saved yet. Combinations can't be
+                // added live yet: the backend requires Stock Quantity to
+                // be 0 before the attachment itself can be saved (see
                 // products.service.js#update), so jumping straight to
-                // VariantManager here would let values be created against
-                // a product that's still colorless in the database.
+                // VariantManager here would let combinations be created
+                // against a product that's still colorless in the
+                // database.
                 <p className="text-xs text-ink-muted dark:text-dark-muted bg-paper-dim dark:bg-dark-card2 rounded-lg px-3 py-2.5">
-                  Set Stock Quantity to 0 and click Save Product first — general stock can't be sold once a
-                  Variation is attached. Then reopen this product to add values, each with its own stock.
+                  Set Stock Quantity to 0 and click Save Product first — general stock can't be sold once Variations
+                  are attached. Then reopen this product to add combinations, each with its own stock.
                 </p>
               ) : (
                 <VariantValuePicker
-                  variationId={form.variationId}
+                  variationIds={form.variationIds}
                   picks={picks}
                   onChange={setPicks}
                   targetStock={form.stock}
@@ -800,40 +895,55 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             </div>
           )}
 
-          {form.baseUom === 'BOX' && (
-            <div className="sm:col-span-2">
-              <label className="label-text" htmlFor="prod-coverage">
-                Coverage per Box (sq ft) <span className="text-ink-muted dark:text-dark-muted font-normal">— powers the Area calculator in POS</span>
-              </label>
+          <div className="sm:col-span-2 flex items-center gap-2.5 pt-1">
+            <label className="flex items-center gap-2.5 text-sm text-ink dark:text-dark-text cursor-pointer">
               <input
-                id="prod-coverage"
-                type="number"
-                min="0"
-                step="0.01"
-                className="input-field figure"
-                value={form.coveragePerBox}
-                onChange={(e) => handleChange('coveragePerBox', e.target.value)}
-                placeholder="e.g. 15"
+                type="checkbox"
+                checked={enableCoverageTracking}
+                onChange={(e) => setEnableCoverageTracking(e.target.checked)}
+                className="rounded border-line dark:border-dark-border text-amber focus:ring-amber"
               />
-            </div>
-          )}
+              Coverage / conversion tracking
+              <span className="text-ink-muted dark:text-dark-muted font-normal">
+                — optional, for tile/flooring-style products; powers the Area calculator in POS
+              </span>
+            </label>
+          </div>
 
-          {(form.baseUom === 'LENGTH' || form.baseUom === 'BUNDLE') && (
-            <div className="sm:col-span-2">
-              <label className="label-text" htmlFor="prod-conversion">
-                Conversion Factor <span className="text-ink-muted dark:text-dark-muted font-normal">— base units per {form.baseUom.toLowerCase()}</span>
-              </label>
-              <input
-                id="prod-conversion"
-                type="number"
-                min="0"
-                step="0.01"
-                className="input-field figure"
-                value={form.conversionFactor}
-                onChange={(e) => handleChange('conversionFactor', e.target.value)}
-                placeholder="e.g. 10"
-              />
-            </div>
+          {enableCoverageTracking && (
+            <>
+              <div>
+                <label className="label-text" htmlFor="prod-coverage">
+                  Coverage per Box (sq ft)
+                </label>
+                <input
+                  id="prod-coverage"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input-field figure"
+                  value={form.coveragePerBox}
+                  onChange={(e) => handleChange('coveragePerBox', e.target.value)}
+                  placeholder="e.g. 15"
+                />
+              </div>
+
+              <div>
+                <label className="label-text" htmlFor="prod-conversion">
+                  Conversion Factor <span className="text-ink-muted dark:text-dark-muted font-normal">— base units per package</span>
+                </label>
+                <input
+                  id="prod-conversion"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input-field figure"
+                  value={form.conversionFactor}
+                  onChange={(e) => handleChange('conversionFactor', e.target.value)}
+                  placeholder="e.g. 10"
+                />
+              </div>
+            </>
           )}
 
           <div className="sm:col-span-2">

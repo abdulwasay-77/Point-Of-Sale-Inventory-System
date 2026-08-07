@@ -16,14 +16,13 @@ datasource db {
 // ENUMS
 // =====================================================
 
-enum UomType {
-  BOX
-  SQ_FT
-  SQ_M
-  LENGTH
-  BUNDLE
-  PIECE
-}
+// UomType used to be a fixed enum (BOX/SQ_FT/SQ_M/LENGTH/BUNDLE/PIECE) --
+// six values chosen for tiles/pipes specifically, hardcoding this app to
+// one retail vertical. Replaced by the UnitOfMeasure model below, which
+// is business-managed exactly like Role became dynamic earlier -- a new
+// business gets a small starter list (Piece, Box, Kg, Liter, Meter,
+// Dozen -- see seed.js) they can freely rename, add to, or remove,
+// instead of a fixed list compiled into the schema.
 
 enum MovementType {
   STOCK_IN
@@ -131,8 +130,11 @@ model Business {
   categoryRows  Category[]
   productRows  Product[]
   productVariantRows  ProductVariant[]
+  productVariantValueRows  ProductVariantValue[]
   variationRows  Variation[]
   variationValueRows  VariationValue[]
+  unitOfMeasureRows  UnitOfMeasure[]
+  productVariationAxisRows  ProductVariationAxis[]
   kitRows  Kit[]
   kitComponentRows  KitComponent[]
   warehouseRows  Warehouse[]
@@ -393,17 +395,30 @@ model Product {
   sku               String    
   category_id       String?   @map("category_id")
   brand             String?
-  base_uom          UomType
+  // Was a fixed enum (BOX/SQ_FT/SQ_M/LENGTH/BUNDLE/PIECE). Now a FK to a
+  // business-managed list -- see UnitOfMeasure below.
+  base_uom_id       String    @map("base_uom_id")
+  // Coverage/box-math is a real feature (see AreaToBoxModal.jsx) but a
+  // domain-specific one -- meaningful for tile/flooring-style products,
+  // meaningless for most others. Already optional at the schema level;
+  // no change needed here, just clearer labeling in the product form
+  // ("Coverage tracking -- optional, for tile/flooring-style products").
   coverage_per_box  Decimal?  @map("coverage_per_box")
   conversion_factor Decimal?  @map("conversion_factor")
   retail_price      Decimal   @map("retail_price")
   wholesale_price   Decimal   @map("wholesale_price")
   cost_price        Decimal   @map("cost_price")
-  hsn_code          String    @map("hsn_code")
-  gst_rate          Decimal   @map("gst_rate")
+  // Was `hsn_code`, required on every product -- India/Pakistan-specific
+  // GST classification, forced even on businesses with no HSN system at
+  // all. Renamed and made optional so it's available for the businesses
+  // that need it without blocking anyone else from saving a product.
+  tax_code          String?   @map("tax_code")
+  // Was `gst_rate` -- the % mechanism is universal, only the name was
+  // regional. Renamed; behavior unchanged.
+  tax_rate          Decimal   @map("tax_rate")
   // Standing discount for this product. Applied as the default on a POS
   // cart line, but always editable per sale (see InvoiceItem.discount_*).
-  // Editing gst_rate, these two fields, and target_margin_pct is
+  // Editing tax_rate, these two fields, and target_margin_pct is
   // restricted to the PRICING_MANAGE permission (Admin only by default) —
   // see products.service.js#stripUnauthorizedPricingFields.
   discount_type     DiscountType @map("discount_type") @default(PERCENTAGE)
@@ -414,17 +429,6 @@ model Product {
   // changes the product's cost; never auto-applied (see purchases.service.js).
   target_margin_pct Decimal?  @map("target_margin_pct")
   is_batch_tracked  Boolean   @map("is_batch_tracked") @default(false)
-  // Independent of is_batch_tracked — a product can be both, neither, or
-  // just one. When set, this product is sold by a specific chosen value
-  // of a globally-defined Variation (e.g. "Color": Red/Blue/Green) — a
-  // deliberate choice the customer makes, as opposed to batch tracking,
-  // which exists for *incidental* manufacturing lot variation, not
-  // customer choice. The Variation itself (its name and possible values)
-  // is defined once, independently of any product, on the Variations
-  // page — see the Variation model below — and reused across as many
-  // products as apply, the same way Category already works. Nullable:
-  // most products don't vary at all.
-  variation_id      String?   @map("variation_id")
   // Optional physical dimensions (e.g. a 2ft x 1ft panel). Left null for
   // any product where size isn't a meaningful attribute.
   length            Decimal?  @map("length")
@@ -438,7 +442,13 @@ model Product {
   updated_at        DateTime  @updatedAt
 
   category          Category?                @relation(fields: [category_id], references: [id])
-  variation         Variation?               @relation(fields: [variation_id], references: [id])
+  base_uom          UnitOfMeasure            @relation(fields: [base_uom_id], references: [id])
+  // Which Variations this product uses at all (e.g. both "Color" and
+  // "Size") -- see ProductVariationAxis below. Replaces the old single
+  // `variation_id` FK, which could only ever point at ONE Variation, so
+  // a product could vary by Color OR Size but never both combined into
+  // one purchasable item ("Red, Medium").
+  variation_axes    ProductVariationAxis[]
   variants          ProductVariant[]
   stock_levels      StockLevel[]
   batches           Batch[]
@@ -457,32 +467,74 @@ model Product {
   @@map("products")
 }
 
+// A business-managed unit of measure -- was a fixed enum (UomType) with
+// six values chosen for one retail vertical (tiles/pipes). Now created,
+// renamed, and removed the same way Roles are, from Settings.
+// `abbreviation` is what's actually shown in tight spaces (POS cart
+// lines, receipts) -- e.g. name "Piece", abbreviation "pc".
+model UnitOfMeasure {
+  id           String   @id @default(uuid())
+  name         String
+  abbreviation String
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  products     Product[]
+
+  business_id String   @map("business_id")
+  business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  @@unique([business_id, name])
+  @@index([business_id])
+  @@map("units_of_measure")
+}
+
+// Which Variations apply to a given product -- e.g. Product "T-Shirt"
+// uses both the "Color" and "Size" Variations. This is what drives the
+// combination grid in the product form (pick Color + Size -> generate
+// Red/S, Red/M, Blue/S, Blue/M...) and is stored explicitly rather than
+// inferred from existing ProductVariants, since a product can have this
+// set up before any variant combinations are actually added.
+model ProductVariationAxis {
+  id           String   @id @default(uuid())
+  product_id   String   @map("product_id")
+  variation_id String   @map("variation_id")
+
+  product      Product   @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  variation    Variation @relation(fields: [variation_id], references: [id])
+
+  business_id String   @map("business_id")
+  business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  @@unique([product_id, variation_id])
+  @@index([business_id])
+  @@map("product_variation_axes")
+}
+
 // A specific, real, stocked combination the admin has chosen to sell —
-// e.g. "Red" (linking to the "Red" VariationValue under the "Color"
-// Variation). Deliberately NOT auto-generated: the admin picks which
-// values from the product's Variation actually apply and adds one
-// ProductVariant per value that's really stocked, the same one-at-a-time
-// flow as before, just pulling the name from the shared global list
-// instead of typing a fresh one each time — see Variation/VariationValue
-// below. A product can be variant-tracked, batch-tracked, both, or
-// neither. When both are on for the same product, a Batch is scoped to
-// one specific variant (see Batch.variant_id below) — e.g. "Red, Batch
-// B2" — so cost and stock are accurate down to the combination of value
-// AND manufacturing lot.
+// e.g. "Red, Medium" (linking to BOTH the "Red" VariationValue under
+// "Color" AND the "Medium" VariationValue under "Size", via
+// ProductVariantValue below). Deliberately NOT auto-generated as stock:
+// the admin picks which combinations are actually stocked and adds one
+// ProductVariant per real combination — a product can list Color+Size as
+// its axes without every theoretical combination existing as a variant.
+// A product can be variant-tracked, batch-tracked, both, or neither.
+// When both are on for the same product, a Batch is scoped to one
+// specific variant (see Batch.variant_id below) — e.g. "Red, Medium,
+// Batch B2" — so cost and stock are accurate down to the combination of
+// values AND manufacturing lot.
 model ProductVariant {
   id                  String    @id @default(uuid())
   product_id          String    @map("product_id")
-  variation_value_id  String    @map("variation_value_id")
   sku                 String    
   // Optional override for the rare combination that shouldn't just use
-  // its VariationValue's price_adjustment (e.g. a clearance-priced
+  // the sum of its values' price_adjustments (e.g. a clearance-priced
   // combo). Left null in the normal case — the effective sale price is
-  // computed as product.retail_price + variation_value.price_adjustment
-  // (see variantToDTO in products.service.js), not stored redundantly
-  // here. Cost is NOT stored here either — unlike selling price, cost
-  // naturally varies by what was actually purchased, so it lives in
-  // CostLot (scoped by variant_id) exactly like batch costing already
-  // works.
+  // computed as product.retail_price + SUM(each linked value's
+  // price_adjustment) (see variantToDTO in products.service.js), not
+  // stored redundantly here. Cost is NOT stored here either — unlike
+  // selling price, cost naturally varies by what was actually purchased,
+  // so it lives in CostLot (scoped by variant_id) exactly like batch
+  // costing already works.
   price_override      Decimal?  @map("price_override")
   image_url           String?   @map("image_url")
   is_active           Boolean   @default(true)
@@ -490,7 +542,10 @@ model ProductVariant {
   updated_at          DateTime  @updatedAt
 
   product             Product        @relation(fields: [product_id], references: [id])
-  variation_value     VariationValue @relation(fields: [variation_value_id], references: [id])
+  // A variant's actual "Red, Medium" combination is the SET of rows here
+  // — see ProductVariantValue below. Replaces the old single
+  // variation_value_id FK, which could only ever hold one value.
+  values              ProductVariantValue[]
   stock_levels        StockLevel[]
   stock_movements     StockMovement[]
   batches             Batch[]
@@ -502,8 +557,35 @@ model ProductVariant {
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
   @@unique([business_id, sku])
   @@index([business_id])
-  @@unique([product_id, variation_value_id])
   @@map("product_variants")
+}
+
+// One row per (variant, value) pair — e.g. a "Red, Medium" variant has
+// TWO rows here: one linking it to "Red" (under Color) and one linking
+// it to "Medium" (under Size). This is what actually enables multi-axis
+// variants: a ProductVariant is no longer tied to exactly one
+// VariationValue, it's tied to however many its product's
+// ProductVariationAxis rows call for.
+//
+// Note: Postgres can't express "no two variants of the same product may
+// have the identical SET of values" as a single constraint on a join
+// table like this — that's enforced in application code instead (see
+// products.service.js#assertNoDuplicateVariantCombination), the same
+// way roles.service.js checks role-name uniqueness before insert rather
+// than only relying on the database to catch it.
+model ProductVariantValue {
+  id                  String   @id @default(uuid())
+  variant_id          String   @map("variant_id")
+  variation_value_id  String   @map("variation_value_id")
+
+  variant             ProductVariant @relation(fields: [variant_id], references: [id], onDelete: Cascade)
+  variation_value     VariationValue @relation(fields: [variation_value_id], references: [id])
+
+  business_id String   @map("business_id")
+  business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  @@unique([variant_id, variation_value_id])
+  @@index([business_id])
+  @@map("product_variant_values")
 }
 
 enum VariationValueType {
@@ -515,7 +597,9 @@ enum VariationValueType {
 // product — e.g. "Color", "Diameter", "Length" — the same way a Category
 // is defined once and then picked from a dropdown when adding a product,
 // rather than being invented fresh on every product. Managed on its own
-// Variations page, not inside the Add Product form.
+// Variations page, not inside the Add Product form. A product can use
+// MULTIPLE Variations at once (Color AND Size) — see
+// ProductVariationAxis on the Product model above.
 model Variation {
   id          String    @id @default(uuid())
   name        String    
@@ -530,8 +614,8 @@ model Variation {
   created_at  DateTime  @default(now())
   updated_at  DateTime  @updatedAt
 
-  values      VariationValue[]
-  products    Product[]
+  values        VariationValue[]
+  product_axes  ProductVariationAxis[]
 
   business_id String   @map("business_id")
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
@@ -545,18 +629,20 @@ model Variation {
 // its own default price add-on so an admin sets "6 inch costs +90" once,
 // and every product/variant using 6 inch picks that up automatically
 // (see ProductVariant.price_override above for the rare per-combination
-// exception).
+// exception). A single variant can now combine price_adjustments from
+// MULTIPLE values at once (see ProductVariantValue above) — e.g. "Red"
+// +0 and "Medium" +0 and "Large" +200 all stack normally.
 model VariationValue {
-  id                String    @id @default(uuid())
-  variation_id      String    @map("variation_id")
-  value             String
-  price_adjustment  Decimal   @map("price_adjustment") @default(0)
-  is_active         Boolean   @default(true)
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  id                     String    @id @default(uuid())
+  variation_id           String    @map("variation_id")
+  value                  String
+  price_adjustment       Decimal   @map("price_adjustment") @default(0)
+  is_active              Boolean   @default(true)
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
-  variation         Variation        @relation(fields: [variation_id], references: [id])
-  product_variants  ProductVariant[]
+  variation              Variation             @relation(fields: [variation_id], references: [id])
+  product_variant_values ProductVariantValue[]
 
   business_id String   @map("business_id")
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
@@ -895,7 +981,13 @@ model InvoiceItem {
   variant_id  String?  @map("variant_id")
   batch_id    String?  @map("batch_id")
   quantity    Decimal
-  uom_used    UomType  @map("uom_used")
+  // Was `UomType` (a fixed enum). Now a plain string SNAPSHOT of the
+  // unit's name/abbreviation at time of sale — not an FK to
+  // UnitOfMeasure — for the same reason InstallmentPlan.min_down_payment_pct
+  // freezes a copy rather than referencing BusinessSettings live: a unit
+  // renamed or deleted after this sale must never rewrite a historical
+  // invoice line.
+  uom_used    String   @map("uom_used")
   unit_price  Decimal  @map("unit_price")
   // Discount actually applied to this line at time of sale — starts as
   // the product's standing discount but can be overridden per sale at
@@ -1216,7 +1308,7 @@ model BusinessSettings {
   tax_id                 String?  @map("tax_id")
   invoice_footer_note    String?  @map("invoice_footer_note")
   currency_symbol        String   @map("currency_symbol") @default("₹")
-  default_gst_rate       Decimal  @map("default_gst_rate") @default(0)
+  default_tax_rate       Decimal  @map("default_tax_rate") @default(0)
   invoice_number_prefix  String   @map("invoice_number_prefix") @default("INV-")
   // Installments module — see InstallmentPlan.min_down_payment_pct,
   // which freezes a copy of this value at plan-creation time.

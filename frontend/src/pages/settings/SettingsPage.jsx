@@ -67,7 +67,7 @@ export default function SettingsPage() {
         tax_id: form.taxId,
         invoice_footer_note: form.invoiceFooterNote,
         currency_symbol: form.currencySymbol,
-        default_gst_rate: form.defaultGstRate,
+        default_tax_rate: form.defaultTaxRate,
         invoice_number_prefix: form.invoiceNumberPrefix,
         min_down_payment_pct: form.minDownPaymentPct,
         low_stock_alerts: form.lowStockAlerts,
@@ -213,7 +213,7 @@ export default function SettingsPage() {
         {/* Sales Defaults */}
         <SettingsSection title="Sales Defaults" icon="chart" tone="amber">
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Default GST Rate (%)" type="number" value={form.defaultGstRate} onChange={(v) => set('defaultGstRate', v)} />
+            <Field label="Default Tax Rate (%)" type="number" value={form.defaultTaxRate} onChange={(v) => set('defaultTaxRate', v)} />
             <Field label="Invoice Number Prefix" value={form.invoiceNumberPrefix || ''} onChange={(v) => set('invoiceNumberPrefix', v)} />
             <Field
               label="Min. Down Payment for Installments (%)"

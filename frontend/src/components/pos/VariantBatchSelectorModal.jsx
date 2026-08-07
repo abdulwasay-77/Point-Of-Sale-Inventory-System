@@ -26,6 +26,10 @@ import { productService } from '../../services/productService'
 export default function VariantBatchSelectorModal({ isOpen, onClose, product, initialQuantity = 1, onSelect }) {
   const needsVariant = Boolean(product?.isVariantTracked)
   const needsBatch = Boolean(product?.isBatchTracked)
+  // A product can use several Variations at once now (e.g. both Color and
+  // Size) — was a single `variationName` string before; join every axis
+  // name together for display here ("Color + Size").
+  const variationLabel = (product?.variationNames || []).join(' + ') || 'variant'
 
   const [variants, setVariants] = useState([])
   const [batches, setBatches] = useState([])
@@ -87,9 +91,9 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
   }
 
   const title = needsVariant && needsBatch
-    ? `Select ${product?.variationName || 'variant'} & batch — ${product?.name || ''}`
+    ? `Select ${variationLabel} & batch — ${product?.name || ''}`
     : needsVariant
-      ? `Select ${product?.variationName || 'variant'} — ${product?.name || ''}`
+      ? `Select ${variationLabel} — ${product?.name || ''}`
       : `Select batch — ${product?.name || ''}`
 
   return (
@@ -104,13 +108,13 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
         {needsVariant && (
           <div>
             <p className="text-sm text-ink-muted dark:text-dark-muted mb-2">
-              This product comes in multiple {(product?.variationName || 'variant').toLowerCase()} options — pick one.
+              This product comes in multiple {(variationLabel).toLowerCase()} options — pick one.
             </p>
             {isLoadingVariants ? (
-              <Loading message={`Loading ${(product?.variationName || 'variant').toLowerCase()} options…`} />
+              <Loading message={`Loading ${(variationLabel).toLowerCase()} options…`} />
             ) : variants.length === 0 ? (
               <EmptyState
-                title={`No ${(product?.variationName || 'variant').toLowerCase()} options in stock`}
+                title={`No ${(variationLabel).toLowerCase()} options in stock`}
                 description="None of this product's options currently have stock."
                 icon="🏷️"
               />
@@ -161,7 +165,7 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
           <div>
             <p className="text-sm text-ink-muted dark:text-dark-muted mb-2">
               {needsVariant
-                ? `Pick the batch/shade within this ${(product?.variationName || 'variant').toLowerCase()}.`
+                ? `Pick the batch/shade within this ${(variationLabel).toLowerCase()}.`
                 : 'This product is batch-tracked — pick the shade/lot.'}
             </p>
             {isLoadingBatches ? (

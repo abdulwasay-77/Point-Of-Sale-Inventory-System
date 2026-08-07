@@ -30,6 +30,7 @@ const RESOURCE_BY_ROUTE = {
   '/api/categories': { name: 'category', article: 'A' },
   '/api/roles': { name: 'role', article: 'A' },
   '/api/variations': { name: 'variation', article: 'A' },
+  '/api/units-of-measure': { name: 'unit', article: 'A' },
   '/api/products': { name: 'product', article: 'A' },
   '/api/kits': { name: 'kit', article: 'A' },
   '/api/sales': { name: 'invoice', article: 'An' },
@@ -61,7 +62,8 @@ const FIELD_LABELS = {
 // from every P2002 error before this table is even consulted, since a
 // user should never see it regardless of which constraint fired.
 const COMPOUND_MESSAGES = {
-  'product_id,variation_value_id': 'This product already has that exact variant combination.',
+  'variant_id,variation_value_id': 'This exact combination is already added to this product.',
+  'product_id,variation_id': 'This Variation is already attached to this product.',
   'value,variation_id': 'This value already exists for this variation.',
   'component_product_id,kit_id': 'This product is already a component of this kit.',
   'batch_number,product_id': 'This batch number is already used for this product.',

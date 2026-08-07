@@ -12,6 +12,7 @@ dotenv.config();
 const authRoutes = require('./modules/auth/auth.routes');
 const categoriesRoutes = require('./modules/categories/categories.routes');
 const variationsRoutes = require('./modules/variations/variations.routes');
+const unitsRoutes = require('./modules/units-of-measure/units.routes');
 const productsRoutes = require('./modules/products/products.routes');
 const customersRoutes = require('./modules/customers/customers.routes');
 const suppliersRoutes = require('./modules/suppliers/suppliers.routes');
@@ -59,6 +60,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/variations', variationsRoutes);
+app.use('/api/units-of-measure', unitsRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/suppliers', suppliersRoutes);

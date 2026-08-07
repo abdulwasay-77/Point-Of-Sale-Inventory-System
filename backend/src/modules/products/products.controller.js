@@ -47,8 +47,9 @@ class ProductsController {
   });
 
   createVariant = asyncHandler(async (req, res) => {
-    if (!req.body.variationValueId && !req.body.variation_value_id) {
-      return res.status(400).json({ success: false, message: 'A value is required' });
+    const valueIds = req.body.variationValueIds || req.body.variation_value_ids;
+    if (!Array.isArray(valueIds) || valueIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one value is required' });
     }
     if (!req.body.sku) {
       return res.status(400).json({ success: false, message: 'Variant SKU is required' });
@@ -77,7 +78,9 @@ class ProductsController {
     // Sent as multipart/form-data (image upload shares this endpoint), so
     // the picked-values list — see the Variant value picker in
     // ProductFormModal — arrives as a JSON string in one field, not real
-    // nested form fields.
+    // nested form fields. variationIds (which Variations this product
+    // uses at all — e.g. both Color and Size) is a plain array of ids
+    // and travels the same way, for the same reason.
     let variants = null;
     if (req.body.variants !== undefined) {
       try {
@@ -86,9 +89,17 @@ class ProductsController {
         return res.status(400).json({ success: false, message: 'Malformed variant list.' });
       }
     }
+    let variationIds;
+    if (req.body.variationIds !== undefined) {
+      try {
+        variationIds = typeof req.body.variationIds === 'string' ? JSON.parse(req.body.variationIds) : req.body.variationIds;
+      } catch {
+        return res.status(400).json({ success: false, message: 'Malformed variation list.' });
+      }
+    }
     const actorPermissions = await getEffectivePermissions(req.user.userId, req.user.role);
     const product = await ProductsService.create(
-      { ...req.body, created_by: req.user?.userId },
+      { ...req.body, ...(variationIds !== undefined && { variationIds }), created_by: req.user?.userId },
       req.file,
       actorPermissions,
       variants,
@@ -98,9 +109,17 @@ class ProductsController {
 
   update = asyncHandler(async (req, res) => {
     const actorPermissions = await getEffectivePermissions(req.user.userId, req.user.role);
+    let variationIds;
+    if (req.body.variationIds !== undefined) {
+      try {
+        variationIds = typeof req.body.variationIds === 'string' ? JSON.parse(req.body.variationIds) : req.body.variationIds;
+      } catch {
+        return res.status(400).json({ success: false, message: 'Malformed variation list.' });
+      }
+    }
     const product = await ProductsService.update(
       req.params.id,
-      { ...req.body, created_by: req.user?.userId },
+      { ...req.body, ...(variationIds !== undefined && { variationIds }), created_by: req.user?.userId },
       req.file,
       actorPermissions,
     );

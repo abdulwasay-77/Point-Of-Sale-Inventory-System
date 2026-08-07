@@ -7,9 +7,9 @@
 const bcrypt = require('bcryptjs');
 const prisma = require('./src/config/db').basePrisma;
 
-const NAME = 'CHANGE';
-const EMAIL = 'CHANGE';
-const PASSWORD = 'CHANGE';
+const NAME = 'Abdul Wasay';
+const EMAIL = 'wasay@platformadmin.com';
+const PASSWORD = 'wasay112';
 
 (async () => {
   const password_hash = await bcrypt.hash(PASSWORD, 10);

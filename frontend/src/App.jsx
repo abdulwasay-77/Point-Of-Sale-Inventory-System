@@ -8,6 +8,7 @@ import LoginPage from './pages/auth/LoginPage'
 import DashboardPage from './pages/dashboard/DashboardPage'
 import CategoriesPage from './pages/categories/CategoriesPage'
 import VariationsPage from './pages/variations/VariationsPage'
+import UnitsOfMeasurePage from './pages/units/UnitsOfMeasurePage'
 import ProductsPage from './pages/products/ProductsPage'
 import CustomersPage from './pages/customers/CustomersPage'
 import CustomerPurchasesPage from './pages/customers/CustomerPurchasesPage'
@@ -95,6 +96,14 @@ export default function App() {
           element={
             <ProtectedRoute requiredPermission="VARIATIONS_MANAGE">
               <VariationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/units"
+          element={
+            <ProtectedRoute requiredPermission="UNITS_MANAGE">
+              <UnitsOfMeasurePage />
             </ProtectedRoute>
           }
         />

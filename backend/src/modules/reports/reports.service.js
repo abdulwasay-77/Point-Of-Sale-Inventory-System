@@ -216,8 +216,8 @@ class ReportsService {
         },
       },
       include: {
-        product: { include: { category: true, variation: true } },
-        variant: { include: { variation_value: true } },
+        product: { include: { category: true } },
+        variant: { include: { values: { include: { variation_value: { include: { variation: true } } } } } },
       },
     });
   }
@@ -255,22 +255,29 @@ class ReportsService {
     return { rows, totalRevenue: rows.reduce((s, r) => s + r.revenue, 0), totalQuantity: rows.reduce((s, r) => s + r.quantitySold, 0) };
   }
 
-  /** Only line items sold with a specific variant selected (e.g. "Red")
-   *  count here — plain, non-varied products have nothing to break out
-   *  by, so they're silently excluded rather than showing up as a
-   *  confusing "Unknown" row. */
+  /** Only line items sold with a specific variant selected count here —
+   *  plain, non-varied products have nothing to break out by, so they're
+   *  silently excluded rather than showing up as a confusing "Unknown"
+   *  row. A variant can combine multiple Variations at once (e.g. "Red,
+   *  Medium") — each one contributes to every axis it touches, so this
+   *  variant adds both to the "Color: Red" row AND the "Size: Medium"
+   *  row, rather than only being reportable under one axis. */
   async salesByVariation(filters) {
     const items = await this._getSaleItemsInRange(filters);
     const byVariation = new Map();
     for (const item of items) {
       if (!item.variant) continue;
-      const variationName = item.product?.variation?.name || 'Variation';
-      const value = item.variant.variation_value?.value || 'Unknown';
-      const key = `${variationName}::${value}`;
-      const existing = byVariation.get(key) || { variation: variationName, value, quantitySold: 0, revenue: 0 };
-      existing.quantitySold += Number(item.quantity);
-      existing.revenue += Number(item.line_total);
-      byVariation.set(key, existing);
+      const values = item.variant.values || [];
+      if (values.length === 0) continue;
+      for (const pv of values) {
+        const variationName = pv.variation_value?.variation?.name || 'Variation';
+        const value = pv.variation_value?.value || 'Unknown';
+        const key = `${variationName}::${value}`;
+        const existing = byVariation.get(key) || { variation: variationName, value, quantitySold: 0, revenue: 0 };
+        existing.quantitySold += Number(item.quantity);
+        existing.revenue += Number(item.line_total);
+        byVariation.set(key, existing);
+      }
     }
     const rows = [...byVariation.values()].sort((a, b) => b.revenue - a.revenue);
     return { rows, totalRevenue: rows.reduce((s, r) => s + r.revenue, 0), totalQuantity: rows.reduce((s, r) => s + r.quantitySold, 0) };

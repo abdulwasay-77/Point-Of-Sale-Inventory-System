@@ -144,7 +144,7 @@ class SalesService {
 
     const products = await prisma.product.findMany({
       where: { id: { in: productLines.map((l) => l.productId) } },
-      include: { stock_levels: { where: { warehouse_id: warehouseId } } },
+      include: { stock_levels: { where: { warehouse_id: warehouseId } }, base_uom: true, variation_axes: true },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
@@ -152,7 +152,7 @@ class SalesService {
     const variants = variantIds.length > 0
       ? await prisma.productVariant.findMany({
           where: { id: { in: variantIds } },
-          include: { variation_value: true },
+          include: { values: { include: { variation_value: true } } },
         })
       : [];
     const variantMap = new Map(variants.map((v) => [v.id, v]));
@@ -176,12 +176,12 @@ class SalesService {
         err.status = 400;
         throw err;
       }
-      if (product.variation_id && !line.variantId) {
+      if (product.variation_axes.length > 0 && !line.variantId) {
         const err = new Error(`"${product.name}" has a variation attached — please select a value`);
         err.status = 400;
         throw err;
       }
-      const available = product.is_batch_tracked || product.variation_id
+      const available = product.is_batch_tracked || product.variation_axes.length > 0
         ? Number((await prisma.stockLevel.findFirst({
             where: {
               product_id: product.id,
@@ -239,13 +239,18 @@ class SalesService {
       const quantity = Number(line.quantity);
       const baseUnitPrice = useWholesalePricing ? Number(product.wholesale_price) : Number(product.retail_price);
       // A variant can cost more or less than the base product — e.g. a
-      // premium value adds +200. That add-on normally comes from the
-      // value it's linked to (variation_value.price_adjustment); a
-      // variant can optionally override that with its own price_override
-      // instead (see the ProductVariant model comment in schema.prisma).
-      const unitPrice = baseUnitPrice + (variant
-        ? Number(variant.price_override ?? variant.variation_value.price_adjustment)
-        : 0);
+      // premium value adds +200. That add-on normally comes from the SUM
+      // of every value the variant combines (e.g. Color "Red" +0 AND
+      // Size "Large" +200 stack to +200 together — see
+      // ProductVariantValue in schema.prisma); a variant can optionally
+      // override that entirely with its own price_override instead (see
+      // the ProductVariant model comment in schema.prisma).
+      const variantAdjustment = variant
+        ? (variant.price_override !== null && variant.price_override !== undefined
+            ? Number(variant.price_override)
+            : (variant.values || []).reduce((sum, pv) => sum + Number(pv.variation_value?.price_adjustment ?? 0), 0))
+        : 0;
+      const unitPrice = baseUnitPrice + variantAdjustment;
       const grossLineTotal = quantity * unitPrice;
       const { discountType, discountValue, discountAmount } = resolveLineDiscount({
         grossLineTotal,
@@ -255,7 +260,7 @@ class SalesService {
         overrideValue: line.discountValue,
       });
       const lineTotal = grossLineTotal - discountAmount;
-      const taxAmount = (lineTotal * Number(product.gst_rate)) / 100;
+      const taxAmount = (lineTotal * Number(product.tax_rate)) / 100;
       subtotal += lineTotal;
       cgst += taxAmount / 2;
       sgst += taxAmount / 2;
@@ -279,7 +284,7 @@ class SalesService {
       const quantity = Number(line.quantity);
       const unitPrice = Number(kit.kit_price);
       const lineTotal = quantity * unitPrice;
-      // Kits are priced as a package — GST applied at the kit's own rate
+      // Kits are priced as a package — tax applied at the kit's own rate
       // isn't separately modeled, so kit lines are treated as already
       // GST-inclusive at checkout (no additional tax line added here).
       subtotal += lineTotal;
@@ -435,7 +440,7 @@ class SalesService {
             variant_id: line.variantId,
             batch_id: line.batchId,
             quantity: line.quantity,
-            uom_used: line.product.base_uom,
+            uom_used: line.product.base_uom?.abbreviation || line.product.base_uom?.name || 'unit',
             unit_price: line.unitPrice,
             discount_type: line.discountType,
             discount_value: line.discountValue,
@@ -473,7 +478,7 @@ class SalesService {
             invoice_id: created.id,
             kit_id: line.kit.id,
             quantity: line.quantity,
-            uom_used: 'PIECE',
+            uom_used: 'unit',
             unit_price: line.unitPrice,
             line_total: line.lineTotal,
           },

@@ -64,8 +64,9 @@ function toPaymentDTO(payment, invoiceNumber, index) {
 
 /**
  * invoice must already be loaded with: customer, created_by_user, items
- * (with product/kit/variant.variation_value/batch), payments (with
- * installment_payment), installment_plan.
+ * (with product/kit/variant.values.variation_value/batch), payments
+ * (with installment_payment), installment_plan — see
+ * INVOICE_INCLUDE_FOR_DTO below.
  */
 function toInvoiceDTO(invoice) {
   const sortedPayments = (invoice.payments || [])
@@ -100,7 +101,7 @@ function toInvoiceDTO(invoice) {
       productId: item.product_id,
       kitId: item.kit_id,
       product: item.product?.name || item.kit?.name || 'Item',
-      variant: item.variant?.variation_value?.value || null,
+      variant: (item.variant?.values || []).map((pv) => pv.variation_value?.value).filter(Boolean).join(' / ') || null,
       batch: item.batch ? `${item.batch.batch_number}${item.batch.shade_code ? ` (${item.batch.shade_code})` : ''}` : null,
       quantity: Number(item.quantity),
       price: Number(item.unit_price),
@@ -130,7 +131,7 @@ function toInvoiceDTO(invoice) {
 const INVOICE_INCLUDE_FOR_DTO = {
   customer: true,
   created_by_user: true,
-  items: { include: { product: true, kit: true, variant: { include: { variation_value: true } }, batch: true } },
+  items: { include: { product: true, kit: true, variant: { include: { values: { include: { variation_value: true } } } }, batch: true } },
   payments: { include: { installment_payment: true } },
   installment_plan: true,
 };
