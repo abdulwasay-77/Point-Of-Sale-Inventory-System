@@ -1,438 +1,439 @@
-# POS & Inventory System
-A full-stack, multi-tenant SaaS Point of Sale & Inventory Management System.
+# General-Purpose Point Of Sale Inventory System
 
-This is a **general-purpose POS and inventory system** designed for many types of retail, wholesale, and service businesses. It is not limited to a single industry: businesses can configure their own products, units of measure, variations, customers, suppliers, warehouses, pricing, and staff workflows.
+A full-stack, multi-tenant **general-purpose Point Of Sale (POS) Inventory System** for retail, wholesale, distribution, and service businesses. It supports the day-to-day flow from configuring a business and catalog, through purchasing and stock control, to POS checkout, customer balances, reporting, and administration.
 
-Backend: Express 5 + Prisma 5 + PostgreSQL, JWT auth, granular role/permission system, multi-business (multi-tenant) data isolation.
+It is intentionally not tied to one industry. A business can define its own categories, units of measure, variations, warehouses, customers, suppliers, prices, staff roles, and enabled features.
 
-Frontend: React 19 + Vite + Tailwind CSS, React Router, Recharts.
+## Contents
 
-```
-pos-inventory-system/
-├── backend/     Express API (Prisma ORM, JWT auth, PostgreSQL)
-└── frontend/    React app (Vite, Tailwind, React Router)
-```
-
-## Table of Contents
-- [Architecture overview](#architecture-overview)
-- [Feature list](#feature-list)
-- [Tech stack](#tech-stack)
-- [Prerequisites](#prerequisites)
+- [What the system does](#what-the-system-does)
+- [Architecture](#architecture)
+- [Complete business flow](#complete-business-flow)
+- [Features](#features)
+- [Access control and tenancy](#access-control-and-tenancy)
+- [Technology](#technology)
+- [Requirements](#requirements)
+- [Installation and local startup](#installation-and-local-startup)
 - [Environment variables](#environment-variables)
-- [Getting started](#getting-started)
-  - [Option A — Quick start with demo data (seed.js)](#option-a--quick-start-with-demo-data-seedjs)
-  - [Option B — Clean start without seed.js (recommended for production/real use)](#option-b--clean-start-without-seedjs-recommended-for-productionreal-use)
-- [Frontend setup](#frontend-setup)
-- [Customizing seed data with AI](#customizing-seed-data-with-ai)
-- [Platform (Super Admin) workflow](#platform-super-admin-workflow)
-- [Roles & permissions](#roles--permissions)
-- [Module gating (per-business feature flags)](#module-gating-per-business-feature-flags)
-- [Chatbot guide and Q&A](#chatbot-guide-and-qa)
-- [Useful backend scripts](#useful-backend-scripts)
+- [First-time onboarding](#first-time-onboarding)
+- [Frontend routes](#frontend-routes)
+- [API reference](#api-reference)
+- [Data model](#data-model)
 - [Project structure](#project-structure)
-- [Notes & known simplifications](#notes--known-simplifications)
+- [Scripts and verification](#scripts-and-verification)
+- [Operational notes](#operational-notes)
 
-## Architecture overview
-This app is multi-tenant: many separate businesses ("tenants") can run on one deployment, each with its own users, products, sales, etc., completely isolated from one another.
+## What the system does
 
-**Platform layer** — PlatformAdmin / Business / PlatformAuditLog. Managed only through `/api/platform/*` routes, authenticated with a completely separate JWT token type (`platformAuthMiddleware.js`) that is never accepted by the normal tenant routes, and vice versa. A Super Admin (Platform Admin) creates and manages businesses, suspends/activates them, resets a business's admin password, and turns feature modules on/off per business.
+The application manages the full commercial loop:
 
-**Tenant layer** — every other model (User, Product, Invoice, Customer, ...) belongs to exactly one Business via `business_id`. Data isolation is enforced automatically by a tenant-scoping Prisma extension (`backend/src/config/db.js`) that injects `business_id` into every query for a tenant model, based on the logged-in user's business (set once per request in `authMiddleware.js` via Node's `AsyncLocalStorage`). Individual service files never need to remember to filter by `business_id` manually.
+1. A platform administrator creates a separate business tenant and its first business administrator.
+2. The business administrator configures branding, users, roles, units, categories, warehouses, products, suppliers, and customers.
+3. Staff record purchases into a warehouse. This increases available stock, creates batch/lot records when required, and opens FIFO cost lots.
+4. Staff sell products, variants, batches, or kits from the POS. Checkout creates an invoice, records payment, deducts stock, consumes cost lots FIFO, and can create credit or installment obligations.
+5. Managers monitor inventory, stock movements, sales, customer/supplier ledgers, payroll, expenses, dashboards, and downloadable reports.
 
-Roles are fully dynamic — there are no hardcoded built-in roles. An admin creates roles from scratch (Users & Roles → Manage Roles) and assigns permissions from a fixed catalog (`backend/src/config/permissions.js`). Each business's first user (the primary admin) has `is_primary_admin=true` and bypasses the role system entirely with full access — this account can't be edited, deactivated, or locked out by anyone else, guaranteeing a business is never left without someone who can manage its own staff.
-
-**Module gating** — independently of roles, a Super Admin can enable/disable entire feature modules (Payroll, Kits, Installments, etc.) per business (`Business.enabled_modules`). This is checked before the role/permission system — a disabled module is invisible and unreachable regardless of any user's role.
-
-## Feature list
-
-### Catalog & inventory
-- **Products** — SKU, barcode, category, brand, base unit of measure (BOX / SQ_FT / SQ_M / LENGTH / BUNDLE / PIECE), retail/wholesale/cost pricing, GST rate, standing discount, target margin, HSN code, reorder threshold, product images (upload).
-- **Categories** — simple CRUD, used to organize products and drive the "Sales by Category" report.
-- **Variations** — reusable, catalog-wide attributes (e.g. Color, Diameter) with per-value price adjustments; products attach a variation and stock is tracked per variant value, never as one colorless pool.
-- **Batch & lot tracking** — batch-tracked products (e.g. tiles, where shade/lot consistency matters) require a batch number (+ optional shade code) at purchase time; POS offers a batch picker so a whole order can be filled from one consistent lot.
-- **Costing (FIFO)** — every purchase opens its own cost lot instead of averaging into the existing cost; sales draw cost from the oldest lot first (FIFO), not a running average.
-- **Kits & bundles** — a kit is priced as a single line at checkout; the backend deducts each component product from stock individually and validates availability across all components before committing.
-- **Flexible UoM / Area-to-box calculator** — products can carry a `coveragePerBox` (sq ft per box); POS offers an area calculator that takes floor dimensions + a waste margin and rounds up to the nearest whole box.
-- **Barcode scanning** — any USB/Bluetooth barcode scanner works out of the box (scanners act as keyboards). Active on the POS page (scan → add to cart) and the product form (scan → fill barcode field). Looks up by barcode first, falls back to SKU.
-- **Barcode label generation & printing** — dedicated Barcode Labels page.
-- **Multi-warehouse inventory** — named warehouses/locations, per-warehouse stock levels, and atomic stock transfers between locations (decrement source / increment destination in one transaction).
-
-### Sales & customers
-- **Point of Sale (POS)** — cart-based checkout, product search grid, barcode scanning, per-product default discount applied automatically (overridable per line at sale time), automatic wholesale pricing for WHOLESALE/CONTRACTOR customers, multiple payment methods (Cash, Card, UPI, Bank Transfer, Credit).
-- **Invoices** — generated on checkout, printable/PDF receipts (`InvoiceReceipt.jsx`, `PaymentReceipt.jsx`), void/reversal support with automatic stock reversal.
-- **Customers** — retail/wholesale/contractor types, credit limits, GSTIN, purchase history per customer.
-- **Customer credit** — outstanding balances, due dates, late fees, dedicated Credit management page.
-- **Installment plans** — schedule-based installment billing with individual installment payments trackable and markable as paid.
-- **Suppliers & supplier ledgers** — running balance per supplier, 0-30/31-60/61-90/90+ day aging breakdown of unpaid purchases, full entry history, and a form to record payments against the balance.
-- **Purchases (Purchase Orders)** — record purchases against a supplier, target a specific receiving warehouse, and open FIFO cost lots automatically.
-
-### Staff & operations
-- **Payroll** — employee records linked to users, payroll records, and automatic sales commission calculation for staff with a linked employee `commission_rate`.
-- **Staff expenses** — staff can record their own expenses (`EXPENSES_RECORD`); admins manage budgets, per-staff spending limits, void entries, and view full history (`EXPENSES_MANAGE`).
-- **Users & Roles** — fully dynamic role creation/editing/deletion, per-user permission overrides on top of role defaults (only the exceptions are stored), user activation/deactivation.
-- **Profile** — per-user avatar, contact info, theme preference (light/dark).
-- **Business Settings** — business info, defaults, logo upload, and a full data backup export (Excel and PDF) of every record currently in the system (passwords excluded).
-
-### Reporting & dashboard
-- **Dashboard** — key stats, recent sales, low-stock list, sales chart.
-- **Reports** (viewable in-app and exportable as PDF/Excel):
-  - Daily Sales
-  - Sales by Product
-  - Sales by Category
-  - Sales by Variation
-  - Expenses
-  - Invoices
-  - Stock Report
-  - Low Stock Report
-  - Customer Summary
-
-### AI chatbot (rule-based, staff-only)
-Floating widget on every page, backed by a single endpoint (`POST /api/chatbot/message`). Not an LLM — a regex-based intent matcher (`backend/src/modules/chatbot/chatbot.service.js`) running against live data (fuzzy-matched product/customer/supplier names). Covers:
-- Stock levels, low-stock lookups, prices, product/customer/supplier lookups
-- Today's / this month's sales, dashboard summary
-- "How do I…" guidance for common tasks (add a product, record a purchase, checkout, add a customer)
-- **Actions** — can adjust stock, record a purchase, or add a customer, but always proposes the exact action first and only executes after an explicit "yes". Gated by the `CHATBOT_ACTIONS` permission plus the normal permission for that action (e.g. `PURCHASES_CREATE`).
-
-## Chatbot guide and Q&A
-
-The Store Assistant is a deterministic, rule-based chatbot available from the **Assistant** button in the top navigation. It uses regular-expression intent matching and fuzzy matching for entity names; it does not use an LLM, machine learning model, external AI service, or external NLP library.
-
-The frontend sends each message to `POST /api/chatbot/message`. The backend reads live tenant-scoped data through the established service layer, so chatbot answers reflect the currently logged-in business only.
-
-### Security and availability rules
-
-- A user must be logged in to use the chatbot.
-- Read-only answers are checked against the relevant permission and the business's enabled modules before data is queried. A disabled module returns a plan message; a missing permission returns an access-denied message.
-- Write actions require both `CHATBOT_ACTIONS` and the normal action permission. For example, recording a purchase also requires `PURCHASES_CREATE`.
-- Every write action is proposed first. The chatbot makes no change unless the next message is an explicit affirmative such as `yes`, `confirm`, or `go ahead`.
-- `no`, `cancel`, `stop`, or similar replies cancel a pending action without changing data.
-- The primary admin bypasses ordinary role permissions, but still receives live module availability from the business configuration.
-
-### Supported questions
-
-Replace placeholders such as `Product Name`, `Customer Name`, `Employee Name`, `Warehouse Name`, and `Kit Name` with actual data in your business.
-
-| Area | Example questions | Required permission | Required module |
-|---|---|---|---|
-| Products and inventory | `what is low on stock`, `how much Product Name do we have`, `price of Product Name`, `tell me about Product Name` | `INVENTORY_VIEW` / product access | `INVENTORY` / `PRODUCTS` |
-| Sales and dashboard | `today's sales`, `this month's sales`, `dashboard summary` | `SALES_VIEW` / `DASHBOARD_VIEW` | `SALES` / core dashboard |
-| Contacts | `find customer Customer Name`, `who supplies Product Name` | `CUSTOMERS_MANAGE` / `SUPPLIERS_MANAGE` | `CONTACTS` |
-| Variations | `what variations do we have`, `values for Color` | `VARIATIONS_MANAGE` | `PRODUCTS` |
-| Kits and bundles | `what's in kit Kit Name`, `can we build 5 Kit Name` | `KITS_MANAGE` | `KITS` |
-| Warehouses and transfers | `stock of Product Name in Warehouse Name`, `stock across warehouses`, `pending transfers` | `WAREHOUSES_MANAGE` / `TRANSFERS_VIEW` | `INVENTORY` |
-| Payroll | `this month's payroll total`, `Employee Name's salary` | `PAYROLL_MANAGE` | `PAYROLL` |
-| Staff expenses | `expense budget status`, `who's over budget this month`, `Employee Name's expenses this month` | `EXPENSES_MANAGE` | `EXPENSES` |
-| Customer credit | `who owes us money`, `total outstanding credit`, `outstanding credit for Customer Name` | `CREDIT_MANAGE` | `CREDIT` |
-| Installment plans | `overdue installments`, `installment plans for Customer Name`, `how many active installment plans` | `INSTALLMENTS_MANAGE` | `INSTALLMENTS` |
-| Attention digest | `what needs my attention`, `morning briefing`, `daily summary` | Per included section | Per included section |
-
-The attention digest includes only sections the user is allowed to view: low stock, overdue installments, overdue customer-credit balances, expense-budget overruns, and pending purchase orders. If there is nothing to report, it returns a positive all-clear response.
-
-### Context memory
-
-The chatbot keeps small session context in the existing `pendingAction` round trip. After resolving a product, short deterministic follow-ups can reuse it:
+## Architecture
 
 ```text
-price of Product Name
-what's its stock?
-and its price?
+React 19 + Vite + Tailwind (frontend, normally http://localhost:5173)
+                    |
+                    | HTTP / JSON, Bearer JWT
+                    v
+Express 5 REST API (backend, normally http://localhost:5000)
+                    |
+                    | Prisma ORM with request-scoped tenant context
+                    v
+PostgreSQL
 ```
 
-Only the most recently resolved product is used for these pronouns, so the behavior stays predictable and does not infer unrelated information.
-
-### Chatbot actions and undo
-
-Supported actions are:
+The repository contains two independently runnable applications:
 
 ```text
-add 5 units of Product Name to stock
-set stock of Product Name to 20
-record a purchase of 5 Product Name from Supplier Name at 100
-add customer named Customer Name with phone 03001234567
+pos-inventory-system/
+├── backend/                 Express API, Prisma schema and migrations
+└── frontend/                React single-page application
 ```
 
-The chatbot displays a confirmation prompt. Reply `yes` to execute or `no` to cancel. After a chatbot stock adjustment, use:
+Uploaded product images, profile avatars, and business logos are stored under `backend/uploads/` and served by the API at `/uploads/...`. The folder is intentionally ignored by Git.
 
-```text
-undo my last action
-```
+### Multi-tenant design
 
-Undo applies the inverse stock adjustment only when it remains safe (for example, it will not make stock negative). Purchases, customer creation, and set-stock actions are intentionally not undone because they may affect multiple related records or overwrite subsequent changes; the chatbot explains this rather than applying a partial reversal.
+Each ordinary business record belongs to a `Business` through `business_id`. The backend establishes the authenticated user's business in Node.js `AsyncLocalStorage`; a Prisma extension automatically adds that tenant scope to reads, writes, aggregates, and deletes for tenant-owned models. A platform administrator and platform audit logs are deliberately outside this tenant scope.
 
-### Manual test checklist
+Tenant and platform sessions use separate JWT types. A platform token is rejected by business routes, and a business token is rejected by platform routes. Suspended businesses are blocked on the next authenticated request.
 
-1. Start the backend with `npm run dev` from `backend/` and the frontend with `npm run dev` from `frontend/`.
-2. Log in as the primary admin, or create a limited test user in **Users & Roles**.
-3. Create representative data: products, a low-stock product, customer, supplier, variation, kit, second warehouse, payroll employee, expense budget, credit sale, and installment plan as needed.
-4. Open **Assistant** and run questions from the table above.
-5. Confirm that a write action does not run before `yes`, then use `undo my last action` after a stock adjustment.
-6. Remove a permission from the limited test user and repeat a matching question; it must return an access-denied response rather than data.
-7. Disable a module for the business through the Platform dashboard and repeat a matching question; it must report that the feature is not included in the business plan.
+## Complete business flow
 
-For a direct API check after login, copy `pos_token` from browser local storage and call:
+### 1. Platform administration and business creation
+
+Use `/platform/login` to sign in as a platform administrator. From the platform dashboard, create a business with its identity/contact information and first primary-admin account. The business receives the default core modules: Products, Inventory, Contacts, POS & Invoices, Purchases, Reports & Dashboard, and Administration.
+
+The platform administrator can then:
+
+- view businesses and business details;
+- activate, suspend, or mark a business as trial;
+- enable or disable modules per business;
+- set the maximum number of admin seats;
+- update business information; and
+- reset the business primary administrator's password.
+
+### 2. Business administration and setup
+
+Sign in at `/login` with the business primary-admin account. This account has full access and cannot be deactivated or locked out by a normal business user.
+
+Set up the business in this recommended order:
+
+1. Open **Settings** and enter company name, logo, address, phone, tax ID, currency symbol, invoice prefix/footer, default tax rate, low-stock settings, credit alerts, session timeout, and installment minimum down-payment percentage.
+2. Add **Units of Measure**, such as Piece, Box, Kilogram, Litre, Meter, Dozen, Square Foot, or any organization-specific unit. Units are configurable, not fixed to a particular industry.
+3. Add **Categories** and optional reusable **Variations** such as Colour, Size, Grade, or Diameter. Each variation can have reusable values and price adjustments.
+4. Create at least one active **Warehouse**. The app uses a default warehouse where necessary.
+5. Add **Suppliers** and **Customers**. Customers can be retail, wholesale, or contractor accounts and may include GSTIN, credit limit, and contact information.
+6. Create dynamic **Roles** and assign only the permissions required. Then add staff users and optional per-user permission overrides.
+7. Add products and, when applicable, kits/bundles.
+
+### 3. Product and inventory setup
+
+A product can include SKU, barcode, product image, category, brand, base unit of measure, retail/wholesale/cost pricing, GST rate, standing discount, target margin, HSN code, reorder level, and product-specific inventory rules.
+
+Products may use the following additional structures:
+
+- **Variants:** stock and pricing can be managed by selected variation values rather than only at the parent-product level.
+- **Batches/lots:** batch-tracked products require a batch number at receiving. Optional shade codes support products where matching the lot matters.
+- **Area coverage:** for box-based coverage products, store coverage per box. At POS, the area calculator accepts dimensions and waste percentage, then rounds to a whole-box quantity.
+- **Kits:** sell one kit line while inventory is deducted for every component product. Availability is validated before the sale is committed.
+- **Barcode labels:** generate barcode values and print labels from the dedicated barcode page.
+
+### 4. Purchasing and receiving stock
+
+Create a purchase against a supplier and receiving warehouse, including product quantities and unit costs. When stock is received, the system records the purchase order and related stock movement, increases the destination warehouse stock, updates the supplier ledger, and creates FIFO cost lots. Batch-tracked items capture batch information during this process.
+
+Supplier payments can be recorded separately. Supplier ledger entries preserve the running balance and support aging-style review of unpaid purchasing activity.
+
+### 5. Warehouse control and transfers
+
+Inventory is held per warehouse through stock-level records. Create warehouses/locations as needed and use stock transfers to move items between them. A transfer atomically decreases stock at the source and increases stock at the destination; transfer history provides an audit trail.
+
+The Inventory page provides available stock and low-stock views. Reorder thresholds on products drive low-stock monitoring and dashboard/report output.
+
+### 6. Point of Sale checkout
+
+Open **POS** and find products through search, SKU/barcode lookup, or a keyboard-mode USB/Bluetooth barcode scanner. Add a product, variant, selected batch, or kit to the cart. The cart supports line-level quantity and discount changes; default product discounts are applied initially. Eligible wholesale/contractor customers receive their wholesale pricing flow.
+
+At checkout, select a customer (or the walk-in customer), payment method, and tendered amount as needed. Available payment methods are Cash, Card, UPI, Bank Transfer, and Credit. Checkout performs its related records as one business operation:
+
+1. validates product/variant/batch/kit availability;
+2. calculates line discounts, tax, totals, payment, balance, and change due;
+3. creates the invoice and invoice items using historical price, unit, discount, and FIFO cost snapshots;
+4. deducts warehouse inventory and consumes the oldest available FIFO cost lots;
+5. creates payment, customer ledger, and staff commission records where applicable; and
+6. creates a credit balance or installment plan when the selected flow needs one.
+
+The completed invoice can be viewed in sales history, printed, and exported as a receipt PDF in the client. A completed sale can be abandoned/reversed through the supported sales action, which reverses the relevant stock effect.
+
+### 7. Customer credit and installment plans
+
+Credit sales are visible in the credit workspace with outstanding, in-progress, payment history, and customer-level views. Record partial or full payments against invoices; excess tender is recorded as change rather than inflating the applied balance. Late fees can be applied through the dedicated credit action.
+
+An installment sale remains a normal sales invoice for stock and reporting purposes, while a linked installment plan stores the down payment, agreed total, number/frequency of installments, and scheduled payments. The configured minimum down-payment percentage is copied to the plan at creation, so later settings changes do not alter historical agreements.
+
+### 8. Staff, payroll, and expenses
+
+Users can have an optional linked employee record. Payroll manages employees, salary, commission rate, payroll periods, payable amounts, and paid status. Sales commissions are generated from sales for linked employees with a commission rate.
+
+Staff expenses are separate from payroll. A user with `EXPENSES_RECORD` can submit and view their own expense history/limit. A user with `EXPENSES_MANAGE` controls the shared budget, default and per-employee limits, adjustments, all-staff history, expenses recorded for another employee, and voiding. Voids preserve the record and refund the budget rather than deleting history.
+
+### 9. Reporting, backup, and assistance
+
+The dashboard presents summary values, sales trends, recent sales, and low-stock items. Reports can be explored in the browser and generated as PDF for daily sales, sales by product/category/variation, expenses, invoices, stock, low stock, and customer summaries. Settings also exposes a complete business-data backup export in Excel and PDF formats (password hashes are excluded).
+
+The floating Store Assistant is a deterministic, rule-based chatbot—not an LLM or an external AI service. It answers selected live-data queries using regex/fuzzy matching for products, customers, and suppliers. It can propose stock adjustments, purchases, or new customers, but it only executes after an explicit confirmation such as `yes`; actions require both `CHATBOT_ACTIONS` and the underlying feature permission.
+
+## Features
+
+| Area | Included capability |
+|---|---|
+| Catalog | Products, categories, brands, product images, SKU/barcode, configurable units, pricing, tax, margin, discounts, HSN, variants, batches, area coverage |
+| Inventory | Per-warehouse stock, stock movements, low-stock monitoring, batches/lots, FIFO cost lots, atomic transfers |
+| POS & sales | Search/grid POS, scanner support, cart, customer price tiers, payment methods, receipts/PDF, invoices, sale reversal |
+| Contacts & purchasing | Customers, customer purchase history, suppliers, purchase orders, supplier ledger and payments |
+| Finance | Credit balances, late fees, partial payments/change due, installment schedules, payroll, commissions, staff expense budget/limits |
+| Management | Dashboard, reporting, PDF/Excel export, business settings, backup export, user profiles/themes |
+| Security | JWT authentication, password hashing, dynamic roles, per-user permission overrides, module gates, tenant isolation, platform/business token separation |
+| Platform | Multiple businesses, business status, plan modules, admin-seat limits, primary-admin password resets, audit logs |
+
+## Access control and tenancy
+
+Business roles are fully dynamic. The first business administrator bypasses normal role checks; other users receive a role and can have explicit permission grants/revocations layered on top.
+
+### Permission catalog
+
+| Group | Permissions |
+|---|---|
+| Dashboard | `DASHBOARD_VIEW` |
+| Products | `PRODUCTS_VIEW`, `PRODUCTS_EDIT`, `PRODUCTS_DELETE`, `PRICING_MANAGE`, `BARCODES_MANAGE`, `CATEGORIES_MANAGE`, `VARIATIONS_MANAGE`, `UNITS_MANAGE` |
+| Inventory | `INVENTORY_VIEW`, `KITS_MANAGE`, `WAREHOUSES_MANAGE`, `TRANSFERS_VIEW`, `TRANSFERS_CREATE`, `PURCHASES_VIEW`, `PURCHASES_CREATE` |
+| Contacts | `CUSTOMERS_MANAGE`, `SUPPLIERS_MANAGE` |
+| Sales & finance | `SALES_CHECKOUT`, `SALES_VIEW`, `REPORTS_VIEW`, `CREDIT_MANAGE`, `INSTALLMENTS_MANAGE` |
+| Administration | `PAYROLL_MANAGE`, `USERS_MANAGE`, `SETTINGS_MANAGE`, `CHATBOT_ACTIONS` |
+| Expenses | `EXPENSES_RECORD`, `EXPENSES_MANAGE` |
+
+Module availability is a second, platform-controlled gate. A disabled module is unavailable even if a role has a related permission. Available module keys are `PRODUCTS`, `INVENTORY`, `CONTACTS`, `SALES`, `PURCHASES`, `REPORTS`, `PAYROLL`, `EXPENSES`, `CREDIT`, `INSTALLMENTS`, `KITS`, and `ADMIN`.
+
+## Technology
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, Vite 6, React Router 6, Tailwind CSS 3, Axios, Recharts |
+| Client exports/printing | jsPDF, JsBarcode, browser print helpers |
+| Backend | Node.js, Express 5, CommonJS |
+| Database | PostgreSQL with Prisma 5 |
+| Security | JSON Web Tokens, bcryptjs |
+| Files/exports | Multer, PDFKit, ExcelJS |
+
+## Requirements
+
+- Node.js LTS and npm
+- PostgreSQL database server
+- A PostgreSQL user/database accessible through `DATABASE_URL`
+
+## Installation and local startup
+
+### 1. Create environment files
+
+Copy the example files and set secure values.
 
 ```powershell
-$token = 'PASTE_TENANT_JWT_HERE'
-Invoke-RestMethod -Method Post -Uri 'http://localhost:5000/api/chatbot/message' `
-  -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' `
-  -Body '{"message":"what needs my attention","pendingAction":null}'
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/.env.example frontend/.env
 ```
 
-### Multi-currency display
-Amounts are stored and entered in PKR; a currency switcher in the navbar (PKR/USD/EUR/GBP/AED/SAR) converts for display only, using fixed rate snapshots (`frontend/src/utils/currency.js`).
+### 2. Install backend dependencies and initialize Prisma
 
-### Platform / Super Admin (multi-tenant management)
-- Separate login and dashboard (`/platform`) for Super Admins.
-- Create a business (auto-generates a unique slug + its first primary admin user in one transaction).
-- Suspend / activate / set trial status per business.
-- Enable/disable feature modules per business.
-- Set a max admin-seat limit per business.
-- Reset a business's primary admin password (support action, no need to know the old password).
-- Update business info (name, industry, contact details).
-- Platform audit log of all the above actions.
+```powershell
+Set-Location backend
+npm install
+npm run prisma:generate
+npx prisma migrate dev
+```
 
-## Tech stack
+For a production database, use the already-created migrations instead:
 
-**Backend**
-- Node.js, Express 5
-- Prisma 5 ORM + PostgreSQL
-- JWT (`jsonwebtoken`) authentication, `bcryptjs` password hashing
-- `multer` (file uploads), `pdfkit` (PDF generation), `exceljs` (Excel export)
-- `nodemon` for local dev
+```powershell
+npx prisma migrate deploy
+```
 
-**Frontend**
-- React 19, Vite 6
-- Tailwind CSS 3
-- React Router 6
-- `axios`, `recharts`, `jsbarcode`, `jspdf`
+### 3. Create initial access
 
-## Prerequisites
-- Node.js (LTS recommended)
-- PostgreSQL (running instance you can connect to)
-- npm
+Choose one of these paths.
+
+#### Recommended: platform-first onboarding
+
+Create a platform-admin database record using a secure, one-off bootstrap method appropriate for your deployment. The repository includes `backend/create-platform-admin.js` as a development helper, but inspect and replace its hard-coded credentials before running it; do not commit real credentials.
+
+```powershell
+Set-Location backend
+node create-platform-admin.js
+```
+
+Start the backend, visit `http://localhost:5173/platform/login` after starting the frontend, then create the business and its primary business administrator in the platform dashboard.
+
+#### Development bootstrap seed
+
+`backend/prisma/seed.js` creates one business, one primary administrator, and starter units (Piece, Box, Kilogram, Liter, Meter, Dozen). It deliberately does not create demo products, customers, suppliers, or roles.
+
+Before seeding, replace every `CHANGEME` value in that file, including business details, primary-admin credentials, status, and enabled module keys. Then run:
+
+```powershell
+Set-Location backend
+npm run prisma:seed
+```
+
+`npx prisma migrate reset` deletes all data in the selected database; use it only for an intentionally disposable local development database.
+
+### 4. Run the backend
+
+```powershell
+Set-Location backend
+npm run dev
+```
+
+The development API listens on `http://localhost:5000` by default. Confirm it at `GET http://localhost:5000/api/health`.
+
+### 5. Run the frontend in a second terminal
+
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+```
+
+Vite prints the local URL, normally `http://localhost:5173`. The frontend uses `VITE_API_BASE_URL` to reach the API.
 
 ## Environment variables
 
 ### `backend/.env`
+
 ```env
-# PostgreSQL connection string
-DATABASE_URL="postgresql://<user>:<password>@localhost:5432/pos_inventory_db"
-
-# Secret used to sign JWTs — required, no default. The server refuses to
-# start without this set (see backend/src/config/env.js).
-JWT_SECRET="change-this-to-a-long-random-string"
-
-# Optional — defaults shown
-JWT_EXPIRES_IN=24h
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/pos_inventory_db"
+JWT_SECRET="replace-with-a-long-random-secret"
 PORT=5000
+
+# Optional defaults used by the backend configuration
+JWT_EXPIRES_IN=24h
 UPLOAD_DIR=uploads
 NODE_ENV=development
 ```
 
+`JWT_SECRET` is mandatory; the server intentionally refuses to start without it. Keep `.env` files, real database URLs, passwords, and upload folders out of source control.
+
 ### `frontend/.env`
+
 ```env
 VITE_API_BASE_URL=http://localhost:5000/api
 ```
 
-## Getting started
+If frontend and API are deployed to different origins, set this to the public API URL and configure CORS appropriately in the backend.
 
-### 1. Install dependencies
-```bash
-cd backend
-npm install
-npx prisma generate
-```
-`npx prisma generate` / `migrate` need to download Prisma's query engine binary the first time — make sure you're not on a network that blocks that.
+## Frontend routes
 
-Apply the database schema:
-```bash
-npx prisma migrate deploy
-# or, for a local/dev database:
-npx prisma migrate dev
-```
+All tenant routes require a signed-in user; the UI additionally checks the matching permission before rendering a page.
 
-From here you have two ways to get your first login, depending on whether you want demo data or a clean production-style start.
+| Route | Screen | Permission |
+|---|---|---|
+| `/login` | Business login | Public |
+| `/` | Dashboard | `DASHBOARD_VIEW` |
+| `/products`, `/categories`, `/variations`, `/units` | Catalog setup | Product/category/variation/unit permission |
+| `/customers`, `/customers/:customerId/purchases`, `/suppliers` | Contact management | Contact permission |
+| `/purchases`, `/inventory`, `/warehouses`, `/kits` | Stock operations | Matching inventory permission |
+| `/pos`, `/sales`, `/sales/:invoiceId` | POS, sales history, invoice detail | Checkout or sales-view permission |
+| `/credit`, `/installments` | Customer balances and payment plans | Matching finance permission |
+| `/reports`, `/reports/generate/:reportKey` | Reports | `REPORTS_VIEW` |
+| `/barcodes`, `/payroll`, `/expenses`, `/users`, `/settings` | Admin/operations pages | Matching permission |
+| `/profile` | Current user's profile and theme | Any authenticated user |
+| `/platform/login`, `/platform/dashboard` | Platform administration | Separate platform session |
 
-### Option A — Quick start with demo data (seed.js)
-> **Important:** The current `seed.js` is a clean bootstrap, not a populated demo catalog. It creates the business, its primary-admin login, and starter units of measure only. Create products, customers, suppliers, and other records through the app before testing their chatbot questions.
-Fastest way to get a fully populated business to explore the UI (categories, variations, products, customers, suppliers — see `backend/prisma/seed.js`).
+## API reference
 
-1. Open `backend/prisma/seed.js` and replace every `CHANGEME` placeholder — the demo Business (name/slug/industry/contact email) and the `PRIMARY_ADMIN` block (name/email/password) — with real values.
-2. Run:
-```bash
-cd backend
-npx prisma migrate reset   # applies migrations + runs the seed automatically
-# or, if your database already has the schema applied:
-npm run prisma:seed
-npm run dev
-```
-3. Log in to the app with the `PRIMARY_ADMIN` email/password you set in step 1. That account is the business's primary admin — use Users & Roles inside the app to create real roles and staff from there.
+All endpoints below are relative to `VITE_API_BASE_URL`/`/api`. Except where noted, tenant endpoints require `Authorization: Bearer <tenant-jwt>`. Platform endpoints use a separate platform JWT.
 
-### Option B — Clean start without seed.js (recommended for production/real use)
-This path never touches demo/dummy data. It uses the platform (Super Admin) layer to create your real business the same way a live deployment would.
-
-**Step 1 — Apply migrations (no seed):**
-```bash
-cd backend
-npx prisma migrate deploy
-# or for local/dev:
-npx prisma migrate dev
-```
-
-**Step 2 — Create your Super Admin (platform-level) login:**
-
-Open `backend/create-platform-admin.js` and replace the `NAME`, `EMAIL`, and `PASSWORD` placeholders with real values, then run it once:
-```bash
-node create-platform-admin.js
-```
-You can safely leave this file in the repo — running it again just fails harmlessly on the unique email constraint — or delete it after use.
-
-**Step 3 — Start the backend:**
-```bash
-npm run dev
-# or in production:
-npm start
-```
-
-**Step 4 — Create your real business:**
-
-1. Start the frontend (see below) and go to the Platform login (`/platform`).
-2. Log in with the Super Admin credentials from Step 2.
-3. From the Platform Dashboard, create a new business — this generates a unique slug and creates that business's primary admin user in the same transaction (no manual SQL, no seed script involved). Alternatively, call the API directly:
-```bash
-curl -X POST http://localhost:5000/api/platform/businesses \
-  -H "Authorization: Bearer <platform_admin_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Your Business Name",
-    "industryType": "Retail",
-    "contactEmail": "owner@yourbusiness.com",
-    "adminName": "Owner Name",
-    "adminEmail": "owner@yourbusiness.com",
-    "adminPassword": "a-strong-password"
-  }'
-```
-4. Log out of the platform dashboard and log in to the normal app (`/login`) with the business admin credentials from step 4.3. From there, use Users & Roles to build out real roles and staff — the business starts on a completely blank slate (no built-in roles, no demo data).
-
-## Frontend setup
-```bash
-cd frontend
-npm install
-npm run dev
-```
-- Frontend runs on http://localhost:5173 (Vite default).
-- Talks to the backend at the URL in `frontend/.env` (`VITE_API_BASE_URL`, defaults to `http://localhost:5000/api`).
-
-Build for production:
-```bash
-npm run build
-npm run preview
-```
-
-## Customizing seed data with AI
-The `backend/prisma/seed.js` file is designed to be easily customizable with AI assistance. All seed data is clearly marked with `CHANGEME` placeholders, making it simple to generate realistic test data for any business scenario.
-
-### How to customize with AI
-1. Copy the `seed.js` file and paste it into any AI chat tool (ChatGPT, Claude, etc.)
-2. Provide your requirements — tell the AI what kind of business you're testing (e.g., "electronics store", "pharmacy", "construction materials", etc.)
-3. Get back a customized file with all `CHANGEME` values replaced with realistic data for your use case
-4. Replace the original `seed.js` with the AI-generated version
-5. Run the seed as described in Option A above
-
-### Example prompts
-- "Replace all CHANGEME values in this seed.js with realistic data for a computer hardware store — include PCs, peripherals, components, etc."
-- "Generate seed data for a pharmaceutical wholesale business with medicines, medical supplies, and healthcare products."
-- "Create seed data for a restaurant supply company with kitchen equipment, utensils, and food service items."
-- "Populate this seed with test data for a fashion boutique — clothing, accessories, footwear with sizes and colors as variations."
-
-The AI will understand the structure and generate appropriate:
-- Business details (name, industry, contact info)
-- Categories that match your industry
-- Products with realistic names, SKUs, prices, and stock levels
-- Variations (colors, sizes, materials, etc.)
-- Customers and suppliers with realistic names and contact details
-- Kits and bundles that make sense for your business type
-
-All while preserving the exact structure and relationships required by the system — so the seeded data works flawlessly out of the box.
-
-## Platform (Super Admin) workflow
-
-| Endpoint | Purpose |
+| Base path | Principal operations |
 |---|---|
-| `POST /api/platform/auth/login` | Super Admin login |
-| `GET /api/platform/auth/me` | Current platform admin info |
-| `GET /api/platform/businesses` | List all businesses |
-| `GET /api/platform/businesses/:id` | Get one business |
-| `POST /api/platform/businesses` | Create a business (+ its primary admin) |
-| `PATCH /api/platform/businesses/:id` | Update business info |
-| `PATCH /api/platform/businesses/:id/status` | Set status: TRIAL / ACTIVE / SUSPENDED |
-| `PATCH /api/platform/businesses/:id/modules` | Set which feature modules are enabled |
-| `PATCH /api/platform/businesses/:id/admin-seats` | Set max admin seats |
-| `POST /api/platform/businesses/:id/reset-admin-password` | Reset that business's primary admin password |
+| `/health` | Public health check |
+| `/auth` | `POST /login`, `GET /me`, `POST /logout`, compatibility `POST /register` |
+| `/categories` | List/get/create/update/delete categories |
+| `/variations` | CRUD variations and variation values |
+| `/units-of-measure` | CRUD configurable units |
+| `/products` | List, search, barcode/SKU lookup, CRUD, upload image, batches, variants, barcode generation |
+| `/customers` | CRUD customers and `/:id/purchases` |
+| `/suppliers` | CRUD suppliers, `/:id/ledger`, and supplier payments |
+| `/inventory` | Inventory listing and `/low-stock` |
+| `/warehouses` | List/get/create/update/deactivate warehouses |
+| `/transfers` | List and create stock transfers |
+| `/purchases` | List/get/create purchase orders/receipts |
+| `/kits` | CRUD kits and components |
+| `/sales` | Checkout, invoice list/detail, abandon/reversal action, last-customer-batch helper |
+| `/credit` | Outstanding/history/in-progress/customer balances, payments, late fees |
+| `/installments` | Plans, plan detail, pay scheduled installment |
+| `/dashboard` | Summary, sales chart, recent sales |
+| `/reports` | Summary reports, generated report datasets, and PDF download |
+| `/payroll` | Employees, payroll records, generation, mark-paid |
+| `/expenses` | Own expense workflow plus budget/limits/history management |
+| `/users`, `/roles` | Permission catalog, users, roles, overrides, deactivation |
+| `/profile` | Profile, avatar, theme, password |
+| `/settings` | Public branding, authenticated settings, logo, backup export |
+| `/chatbot/message` | Rule-based Store Assistant conversation |
+| `/platform/auth`, `/platform/businesses` | Platform login/session and multi-business management |
 
-Platform routes use a completely separate JWT token type from normal tenant users — a platform token is rejected by tenant routes and a tenant token is rejected by platform routes.
+For a precise request body or response shape, use the matching frontend service in `frontend/src/services/` together with its backend controller/service. The API returns application errors through the central Express error handler.
 
-## Roles & permissions
-- Roles are fully dynamic — created, renamed, re-permissioned, and deleted through Users & Roles → Manage Roles. A brand-new role starts with zero permissions.
-- Permissions are granted from a fixed catalog (`backend/src/config/permissions.js`), grouped by module (Products, Inventory, Contacts, Sales, Admin, Expenses, ...).
-- A user's effective permissions = their role's permission set + any per-user overrides (Users & Roles → a user → Permissions). Only the exceptions are stored, so most users just inherit their role's defaults.
-- The primary admin account (one per business, created at business setup) bypasses the role system entirely and always has full access. It can't be edited, deactivated, or have its permissions overridden by anyone else — this guarantees a business is never left without someone who can manage its own staff and roles.
+## Data model
 
-## Module gating (per-business feature flags)
-Independent of roles, a Super Admin controls which feature modules exist for a business at all (`Business.enabled_modules`, checked before any permission check):
+Prisma schema: `backend/prisma/schema.prisma`.
 
-`PRODUCTS, INVENTORY, CONTACTS, SALES, PURCHASES, REPORTS, PAYROLL, EXPENSES, CREDIT, INSTALLMENTS, KITS, ADMIN`
+| Domain | Core records |
+|---|---|
+| Platform and identity | `PlatformAdmin`, `PlatformAuditLog`, `Business`, `User`, `Role`, `RolePermission`, `UserPermission`, `AuditLog` |
+| Catalog | `Category`, `UnitOfMeasure`, `Variation`, `VariationValue`, `Product`, `ProductVariant`, `ProductVariantValue`, `ProductVariationAxis`, `Kit`, `KitComponent` |
+| Inventory | `Warehouse`, `StockLevel`, `StockMovement`, `StockTransfer`, `Batch`, `CostLot` |
+| Sales | `Customer`, `CustomerLedgerEntry`, `Invoice`, `InvoiceItem`, `Payment`, `InstallmentPlan`, `InstallmentPayment` |
+| Purchasing | `Supplier`, `SupplierLedgerEntry`, `PurchaseOrder`, `PurchaseOrderItem` |
+| People and expenses | `Employee`, `PayrollRecord`, `CommissionRecord`, `ExpenseBudget`, `ExpenseBudgetAdjustment`, `StaffExpenseLimit`, `StaffExpense` |
+| Business configuration | `BusinessSettings` |
 
-A new business defaults to: `PRODUCTS, INVENTORY, CONTACTS, SALES, PURCHASES, REPORTS, ADMIN`. See `backend/src/config/modules.js`.
-
-## Useful backend scripts
-```bash
-npm run dev             # start with nodemon (auto-restart)
-npm start                # start normally
-npm run prisma:generate  # regenerate Prisma client
-npm run prisma:migrate   # prisma migrate dev
-npm run prisma:studio    # open Prisma Studio (DB browser)
-npm run prisma:seed      # run prisma/seed.js manually
-node create-platform-admin.js         # create a Super Admin login (edit placeholders first)
-node scripts/validate-schema.js prisma/schema.prisma   # validate schema.prisma without needing Prisma engine binaries
-```
+Historical sales records snapshot the unit, price, applied discount, and cost of goods sold. This preserves historical invoice/margin accuracy if a product, unit, price, or default discount is later changed.
 
 ## Project structure
-```
+
+```text
 backend/
-├── create-platform-admin.js     One-off script: create a Super Admin login
 ├── prisma/
-│   ├── schema.prisma             Full DB schema (multi-tenant, 27+ models)
-│   ├── seed.js                   Demo business + demo data (optional)
-│   └── migrations/                Migration history
-├── scripts/
-│   └── validate-schema.js        Standalone schema validator (no engine binaries needed)
-├── uploads/                       Product/avatar/business images (local disk)
-└── src/
-    ├── app.js / server.js
-    ├── config/                    db (tenant-scoping Prisma extension), env, modules, permissions
-    ├── middleware/                auth, platform auth, permissions, roles, upload, error handling
-    ├── modules/                   auth, categories, chatbot, credit, customers, dashboard, expenses,
-    │                              installments, inventory, kits, payroll, platform (business + platform auth),
-    │                              products, profile, purchases, reports, roles, sales, settings,
-    │                              suppliers, transfers, users, variations, warehouses
-    └── utils/                     shared helpers (api responses, PDF tables, ledgers, permissions, etc.)
+│   ├── schema.prisma                Database models and enums
+│   ├── migrations/                  Versioned PostgreSQL migrations
+│   └── seed.js                      Development business/admin/unit bootstrap
+├── src/
+│   ├── app.js                       Express application and route mounts
+│   ├── server.js                    HTTP server startup
+│   ├── config/                      Environment, Prisma tenancy, modules, permissions
+│   ├── middleware/                  Auth, permission, upload, platform auth, errors
+│   ├── modules/                     Controller/service/router per business feature
+│   └── utils/                       DTOs, PDF tables, ledger, matching, helpers
+└── create-platform-admin.js         One-off development platform bootstrap helper
 
 frontend/
-└── src/
-    ├── components/                chatbot, common, dashboard, layout, pos, products, sales
-    ├── context/                   Auth, BusinessSettings, Cart, Currency, Theme
-    ├── hooks/                     auth, barcode scanner, cart, currency, permissions, theme, etc.
-    ├── layouts/                   AuthLayout, DashboardLayout
-    ├── pages/                     one folder per feature area (matches backend modules), plus platform/
-    ├── routes/                    ProtectedRoute, PlatformProtectedRoute
-    ├── services/                  one axios-based service per backend module
-    └── utils/                     currency, formatters, receipt PDF, etc.
+├── src/
+│   ├── App.jsx                      Route definitions and page permission guards
+│   ├── pages/                       Page-level screens
+│   ├── components/                  POS, product, dashboard, layout, receipt, common UI
+│   ├── services/                    Axios API clients by feature
+│   ├── context/ and hooks/          Auth, cart, theme, currency, settings state
+│   ├── routes/                      Tenant and platform route guards
+│   └── utils/                       Currency, receipts/PDF, scanner, formatting helpers
+├── vite.config.js
+└── tailwind.config.js
 ```
 
-## Notes & known simplifications
-- Product/avatar/business images are stored on local disk under `backend/uploads/` and served statically — fine for development, but you'll want cloud storage (S3, etc.) before deploying anywhere with an ephemeral filesystem.
-- CORS is wide open (`app.use(cors())`) — tighten this to your actual frontend origin before deploying.
-- Currency conversion uses fixed rate snapshots, not a live FX API (`frontend/src/utils/currency.js`).
-- `Business.slug` is not yet used for real subdomain-based tenant routing (single-deployment stage) — kept for display/reference so that can be added later without a schema change.
-- Kit components are deducted from whichever stock level has the most quantity — batch selection isn't threaded through kit components individually yet.
+## Scripts and verification
+
+### Backend
+
+```powershell
+Set-Location backend
+npm run dev                 # Start with nodemon
+npm start                   # Start with Node
+npm run prisma:generate     # Generate Prisma client
+npm run prisma:migrate      # Create/apply a development migration
+npm run prisma:studio       # Open Prisma Studio
+npm run prisma:seed         # Run development bootstrap seed
+node scripts/validate-schema.js
+```
+
+### Frontend
+
+```powershell
+Set-Location frontend
+npm run dev                 # Vite development server
+npm run build               # Production build
+npm run lint                # ESLint
+npm run preview             # Preview built application
+```
+
+Suggested smoke test after setup:
+
+1. Sign in as a primary business administrator.
+2. Create a warehouse, unit/category, supplier, customer, and product.
+3. Record a purchase into the warehouse.
+4. Confirm stock in Inventory, then complete a POS cash sale.
+5. Confirm invoice, stock reduction, recent-sales dashboard entry, and report output.
+6. Create a restricted role and verify that disabled navigation/routes return the user to the dashboard and backend requests return `403`.
+7. For multi-tenant deployments, create a second business and confirm no catalog, contact, invoice, or inventory records appear across businesses.
+
+## Operational notes
+
+- Use `npx prisma migrate deploy` in deployment pipelines; do not use `migrate reset` against a shared or production database.
+- Back up PostgreSQL and `backend/uploads/` together. Database-only backups do not contain image files.
+- The application currently enables CORS with the Express default (`app.use(cors())`). Restrict allowed origins before a public production deployment.
+- The codebase has a placeholder backend `npm test` script; use schema validation, frontend linting, a production frontend build, and the smoke flow above until automated tests are added.
+- Currency conversion in the client is display-only and uses local fixed-rate snapshots. Amounts are stored/entered in the business's operational currency.
+- Barcode scanners work as keyboard input; no special scanner driver or API is required by the application.
+- Do not commit `backend/.env`, `frontend/.env`, real platform-bootstrap credentials, database dumps, or upload directories.
