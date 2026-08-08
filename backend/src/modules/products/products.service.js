@@ -54,6 +54,7 @@ async function generateUniqueBarcode() {
 const PRODUCT_INCLUDE = {
   category: true,
   base_uom: true,
+  coverage_uom: true,
   stock_levels: true,
   variation_axes: { include: { variation: true } },
 };
@@ -88,6 +89,58 @@ class ProductsService {
       throw err;
     }
     return fallback.id;
+  }
+
+  /**
+   * Validates the optional area-coverage rule — e.g. "1 carton covers
+   * 1.44 m²" — replacing the old coverage_per_box/conversion_factor pair.
+   * Both `coverage_quantity` and `coverage_uom_id` must be supplied
+   * together, or both left blank; a lone value is rejected rather than
+   * silently ignored, since a quantity with no unit (or vice versa) isn't
+   * a usable coverage rule. When supplied, coverage_uom_id must point at
+   * a UnitOfMeasure whose measurement_type is AREA — a Count/Weight/
+   * Volume/Length unit isn't a valid coverage unit even if it exists.
+   *
+   * Returns `{ coverage_quantity, coverage_uom_id }`, both null when the
+   * feature is disabled/cleared — callers can spread this straight into
+   * a Prisma `data` object either on create or (conditionally, see
+   * `update` below) on update, which is also how disabling the feature
+   * on an existing product clears both saved values instead of leaving
+   * stale ones behind.
+   */
+  async validateCoverageFields(data) {
+    const hasQuantity = data.coverage_quantity !== undefined && data.coverage_quantity !== null && data.coverage_quantity !== '';
+    const hasUnit = data.coverage_uom_id !== undefined && data.coverage_uom_id !== null && data.coverage_uom_id !== '';
+
+    if (!hasQuantity && !hasUnit) {
+      return { coverage_quantity: null, coverage_uom_id: null };
+    }
+    if (!hasQuantity || !hasUnit) {
+      const err = new Error('Area coverage needs both a coverage quantity and an area unit — or leave both blank to disable it.');
+      err.status = 400;
+      throw err;
+    }
+
+    const quantity = Number(data.coverage_quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      const err = new Error('Coverage quantity must be a positive number.');
+      err.status = 400;
+      throw err;
+    }
+
+    const unit = await prisma.unitOfMeasure.findUnique({ where: { id: data.coverage_uom_id } });
+    if (!unit) {
+      const err = new Error('That coverage unit no longer exists. Pick another one, or add it under Units of Measure.');
+      err.status = 400;
+      throw err;
+    }
+    if (unit.measurement_type !== 'AREA') {
+      const err = new Error('The coverage unit must be an Area-type unit (e.g. Square Metre, Square Foot).');
+      err.status = 400;
+      throw err;
+    }
+
+    return { coverage_quantity: quantity, coverage_uom_id: unit.id };
   }
 
   async getAll({ q, categoryId } = {}) {
@@ -182,6 +235,8 @@ class ProductsService {
       await this.validateVariantAllocation(variationIds, variants, initialStock);
     }
 
+    const coverageFields = await this.validateCoverageFields(data);
+
     // Barcode is either an existing one scanned/typed in (e.g. a
     // manufacturer's own barcode), or left null here — a distinct,
     // auto-generated code is created on demand via generateBarcode()
@@ -194,11 +249,10 @@ class ProductsService {
       category_id: data.categoryId || data.category_id || null,
       brand: data.brand || null,
       base_uom_id: baseUomId,
-      // Coverage/box-math (Area-to-Box calculator) — optional, domain-
-      // specific (tile/flooring-style products). Left as-is here at the
-      // schema level; only its label in the product form changed.
-      coverage_per_box: data.coverage_per_box !== undefined && data.coverage_per_box !== '' ? Number(data.coverage_per_box) : null,
-      conversion_factor: data.conversion_factor !== undefined && data.conversion_factor !== '' ? Number(data.conversion_factor) : null,
+      // Optional area-coverage rule (e.g. "1 carton covers 1.44 m²") —
+      // see validateCoverageFields() above. Null/null when not set.
+      coverage_quantity: coverageFields.coverage_quantity,
+      coverage_uom_id: coverageFields.coverage_uom_id,
       is_batch_tracked: isBatchTracked,
       length: data.length !== undefined && data.length !== '' ? Number(data.length) : null,
       width: data.width !== undefined && data.width !== '' ? Number(data.width) : null,
@@ -621,6 +675,16 @@ class ProductsService {
       ? await this.resolveBaseUomId(data.baseUomId || data.base_uom_id)
       : undefined;
 
+    // Coverage is only re-validated/updated when the request actually
+    // touches either field — same "only what's present gets updated"
+    // spirit as everything else in this method. Sending both as empty
+    // strings (the form does this when the "covers an area" checkbox is
+    // turned off) resolves to { null, null } via validateCoverageFields,
+    // which is exactly what clears both saved values below.
+    const coverageUpdate = (data.coverage_quantity !== undefined || data.coverage_uom_id !== undefined)
+      ? await this.validateCoverageFields(data)
+      : undefined;
+
     await prisma.product.update({
       where: { id },
       data: {
@@ -645,11 +709,9 @@ class ProductsService {
         ...(data.reorder_threshold !== undefined && { reorder_threshold: Number(data.reorder_threshold) }),
         ...(data.barcode !== undefined && { barcode: data.barcode?.trim() || null }),
         ...(baseUomId !== undefined && { base_uom_id: baseUomId }),
-        ...(data.coverage_per_box !== undefined && {
-          coverage_per_box: data.coverage_per_box === '' ? null : Number(data.coverage_per_box),
-        }),
-        ...(data.conversion_factor !== undefined && {
-          conversion_factor: data.conversion_factor === '' ? null : Number(data.conversion_factor),
+        ...(coverageUpdate !== undefined && {
+          coverage_quantity: coverageUpdate.coverage_quantity,
+          coverage_uom_id: coverageUpdate.coverage_uom_id,
         }),
         ...(data.is_batch_tracked !== undefined && {
           is_batch_tracked: data.is_batch_tracked === true || data.is_batch_tracked === 'true',
@@ -1161,13 +1223,17 @@ class ProductsService {
       baseUomId: product.base_uom_id,
       baseUom: product.base_uom?.name ?? null,
       baseUomAbbreviation: product.base_uom?.abbreviation ?? null,
-      // FR: Flexible UoM Conversion — coveragePerBox (sq ft per box) powers
-      // the Area-to-Box calculator; conversionFactor is a generic
-      // base-units-per-alternate-unit ratio. Both optional — meaningful
-      // mainly for tile/flooring-style products, harmless (null) for
-      // anything else.
-      coveragePerBox: product.coverage_per_box !== null && product.coverage_per_box !== undefined ? Number(product.coverage_per_box) : null,
-      conversionFactor: product.conversion_factor !== null && product.conversion_factor !== undefined ? Number(product.conversion_factor) : null,
+      // Optional area-coverage rule (e.g. "1 carton covers 1.44 m²") —
+      // powers the Area Coverage Calculator in POS (see
+      // AreaCoverageCalculatorModal.jsx). Replaces the old flooring-
+      // specific coveragePerBox/conversionFactor pair, which assumed the
+      // sale unit was always a box and the area was always square feet.
+      // Both fields are set together or both null — see
+      // validateCoverageFields() above.
+      coverageQuantity: product.coverage_quantity == null ? null : Number(product.coverage_quantity),
+      coverageUomId: product.coverage_uom_id,
+      coverageUom: product.coverage_uom?.name ?? null,
+      coverageUomAbbreviation: product.coverage_uom?.abbreviation ?? null,
       // FR: Batch & Lot Tracking — when true, this product must be sold
       // from a specific batch (see GET /products/:id/batches).
       isBatchTracked: product.is_batch_tracked,

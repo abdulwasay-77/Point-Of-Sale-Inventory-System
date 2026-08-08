@@ -33,6 +33,23 @@ enum MovementType {
   VOID_REVERSAL
 }
 
+// Describes what kind of thing a business-managed UnitOfMeasure actually
+// measures. Units are dynamic (an admin can create "Carton", "Bundle",
+// anything) so the app cannot infer this from a unit's name -- it must be
+// chosen explicitly when the unit is created. COUNT is the default for a
+// freshly created unit (a whole, discrete, countable thing). AREA is what
+// gates which units are selectable in a product's optional coverage rule
+// below (see Product.coverage_uom_id) -- e.g. "Square Metre"/"Square
+// Foot", never a count/weight/volume/length unit.
+enum MeasurementType {
+  COUNT
+  AREA
+  LENGTH
+  WEIGHT
+  VOLUME
+  OTHER
+}
+
 enum InvoiceStatus {
   COMPLETED
   VOID
@@ -398,13 +415,17 @@ model Product {
   // Was a fixed enum (BOX/SQ_FT/SQ_M/LENGTH/BUNDLE/PIECE). Now a FK to a
   // business-managed list -- see UnitOfMeasure below.
   base_uom_id       String    @map("base_uom_id")
-  // Coverage/box-math is a real feature (see AreaToBoxModal.jsx) but a
-  // domain-specific one -- meaningful for tile/flooring-style products,
-  // meaningless for most others. Already optional at the schema level;
-  // no change needed here, just clearer labeling in the product form
-  // ("Coverage tracking -- optional, for tile/flooring-style products").
-  coverage_per_box  Decimal?  @map("coverage_per_box")
-  conversion_factor Decimal?  @map("conversion_factor")
+  // Optional area-coverage rule for this product -- e.g. "1 carton covers
+  // 1.44 m2". Replaces the old coverage_per_box/conversion_factor pair,
+  // which hard-coded the sale unit to "box" and the area unit to square
+  // feet. Both fields are set together or not at all (enforced in
+  // products.service.js#validateCoverageFields) -- coverage_uom_id must
+  // point at a UnitOfMeasure whose measurement_type is AREA. Distinct
+  // from base_uom_id: base_uom_id is what's counted/stocked/sold (e.g.
+  // Carton), coverage_uom_id is what one sold unit covers (e.g. Square
+  // Metre) -- see AreaCoverageCalculatorModal.jsx in POS.
+  coverage_quantity Decimal?        @map("coverage_quantity")
+  coverage_uom_id   String?         @map("coverage_uom_id")
   retail_price      Decimal   @map("retail_price")
   wholesale_price   Decimal   @map("wholesale_price")
   cost_price        Decimal   @map("cost_price")
@@ -443,6 +464,7 @@ model Product {
 
   category          Category?                @relation(fields: [category_id], references: [id])
   base_uom          UnitOfMeasure            @relation(fields: [base_uom_id], references: [id])
+  coverage_uom      UnitOfMeasure?           @relation("CoverageUnit", fields: [coverage_uom_id], references: [id])
   // Which Variations this product uses at all (e.g. both "Color" and
   // "Size") -- see ProductVariationAxis below. Replaces the old single
   // `variation_id` FK, which could only ever point at ONE Variation, so
@@ -473,14 +495,28 @@ model Product {
 // `abbreviation` is what's actually shown in tight spaces (POS cart
 // lines, receipts) -- e.g. name "Piece", abbreviation "pc".
 model UnitOfMeasure {
-  id           String   @id @default(uuid())
-  name         String
-  abbreviation String
-  is_active    Boolean  @default(true)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  id               String          @id @default(uuid())
+  name             String
+  abbreviation     String
+  // What this unit actually measures -- see MeasurementType above. Chosen
+  // explicitly by whoever creates the unit (defaults to COUNT), never
+  // guessed from its name. Only units with type AREA are selectable as a
+  // product's coverage_uom_id (see units.service.js#update, which also
+  // locks this field from changing once any product uses the unit either
+  // way, so an in-use unit can't silently break existing products).
+  measurement_type MeasurementType @default(COUNT)
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
 
-  products     Product[]
+  products         Product[]
+  // Products that use this unit as their optional area-coverage unit
+  // (Product.coverage_uom_id) -- separate from `products` above, which is
+  // the stock/sale unit (Product.base_uom_id). A unit can appear in both
+  // lists at once (nothing stops "Square Metre" from also being sold
+  // directly), tracked as two distinct relations since they mean
+  // different things.
+  coverage_products Product[] @relation("CoverageUnit")
 
   business_id String   @map("business_id")
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)

@@ -12,6 +12,7 @@ import { usePermissions } from '../../hooks/usePermissions'
 import VariantManager from './VariantManager'
 import VariantValuePicker from './VariantValuePicker'
 import BatchManager from './BatchManager'
+import AreaCoverageFields from './AreaCoverageFields'
 
 /**
  * Create/Edit form for a single product. Builds a FormData payload (so the
@@ -74,8 +75,8 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     barcode: '',
     baseUomId: '',
     warehouseId: '',
-    coveragePerBox: '',
-    conversionFactor: '',
+    coverageQuantity: '',
+    coverageUomId: '',
     isBatchTracked: false,
     variationIds: [],
     length: '',
@@ -92,12 +93,13 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   // isOpen effect below).
   const [priceTouched, setPriceTouched] = useState(false)
   const [wholesaleTouched, setWholesaleTouched] = useState(false)
-  // Coverage/conversion tracking — optional, domain-specific (mainly
-  // tile/flooring-style products). Used to be shown only when a fixed
-  // enum's Unit of Measure equalled "BOX"/"LENGTH"/"BUNDLE"; now that
-  // units are a free-form business-managed list, that string match no
-  // longer makes sense, so this is its own explicit opt-in toggle
-  // instead, independent of which unit is picked.
+  // Area-coverage tracking — optional, generic (works for any product
+  // whose sale unit covers an area, e.g. tile cartons, paint tins). Used
+  // to be shown only when a fixed enum's Unit of Measure equalled
+  // "BOX"/"LENGTH"/"BUNDLE"; now that units are a free-form business-
+  // managed list with an explicit measurementType, this is its own
+  // opt-in toggle instead, independent of which sale unit is picked. See
+  // AreaCoverageFields.jsx for the two fields it reveals.
   const [enableCoverageTracking, setEnableCoverageTracking] = useState(false)
   // Combinations picked for a brand-new product — see
   // VariantValuePicker. An ARRAY of { valueIds: [...], sku, stock,
@@ -159,8 +161,8 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
         barcode: initialValues?.barcode || '',
         baseUomId: initialValues?.baseUomId || '',
         warehouseId: '',
-        coveragePerBox: initialValues?.coveragePerBox ?? '',
-        conversionFactor: initialValues?.conversionFactor ?? '',
+        coverageQuantity: initialValues?.coverageQuantity ?? '',
+        coverageUomId: initialValues?.coverageUomId || '',
         isBatchTracked: initialValues?.isBatchTracked || false,
         variationIds: initialValues?.variationIds || [],
         length: initialValues?.length ?? '',
@@ -168,7 +170,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
         dimensionUnit: initialValues?.dimensionUnit || 'ft',
       })
       setEnableCoverageTracking(
-        Boolean(initialValues?.coveragePerBox || initialValues?.conversionFactor),
+        Boolean(initialValues?.coverageQuantity && initialValues?.coverageUomId),
       )
       setImagePreview(initialValues?.image ? toImageUrl(initialValues.image) : null)
       setImageFile(null)
@@ -337,6 +339,14 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     if (canManagePricing && form.discountValue !== '' && Number(form.discountValue) < 0) {
       next.discountValue = 'Discount cannot be negative.'
     }
+    if (enableCoverageTracking) {
+      if (form.coverageQuantity === '' || Number(form.coverageQuantity) <= 0) {
+        next.coverageQuantity = 'Enter a positive coverage quantity.'
+      }
+      if (!form.coverageUomId) {
+        next.coverageUomId = 'Select an area unit.'
+      }
+    }
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -352,8 +362,20 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
     formData.append('price', form.price)
     if (form.barcode.trim()) formData.append('barcode', form.barcode.trim())
     formData.append('base_uom_id', form.baseUomId)
-    if (enableCoverageTracking && form.coveragePerBox !== '') formData.append('coverage_per_box', form.coveragePerBox)
-    if (enableCoverageTracking && form.conversionFactor !== '') formData.append('conversion_factor', form.conversionFactor)
+    // When the "covers an area" toggle is on, send both coverage values
+    // (validated together server-side). When it's off, send explicit
+    // empty strings — not simply omit the fields — so an existing
+    // product's saved coverage is actually cleared on update rather than
+    // left untouched (see products.service.js#update, which only
+    // re-validates/clears coverage when at least one of these keys is
+    // present in the request at all).
+    if (enableCoverageTracking) {
+      formData.append('coverage_quantity', form.coverageQuantity)
+      formData.append('coverage_uom_id', form.coverageUomId)
+    } else if (initialValues?.id) {
+      formData.append('coverage_quantity', '')
+      formData.append('coverage_uom_id', '')
+    }
     formData.append('is_batch_tracked', form.isBatchTracked ? 'true' : 'false')
     formData.append('variationIds', JSON.stringify(form.variationIds))
     if (form.warehouseId) formData.append('warehouseId', form.warehouseId)
@@ -733,7 +755,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               value={form.baseUomId}
               onChange={(e) => handleChange('baseUomId', e.target.value)}
             >
-              {units.length === 0 && <option value="">No units yet — add one under Settings → Units</option>}
+              {units.length === 0 && <option value="">No units yet — add one on the Units of Measure page</option>}
               {units.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name} ({u.abbreviation})
@@ -887,55 +909,20 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
             </div>
           )}
 
-          <div className="sm:col-span-2 flex items-center gap-2.5 pt-1">
-            <label className="flex items-center gap-2.5 text-sm text-ink dark:text-dark-text cursor-pointer">
-              <input
-                type="checkbox"
-                checked={enableCoverageTracking}
-                onChange={(e) => setEnableCoverageTracking(e.target.checked)}
-                className="rounded border-line dark:border-dark-border text-amber focus:ring-amber"
-              />
-              Coverage / conversion tracking
-              <span className="text-ink-muted dark:text-dark-muted font-normal">
-                — optional, for tile/flooring-style products; powers the Area calculator in POS
-              </span>
-            </label>
-          </div>
-
-          {enableCoverageTracking && (
-            <>
-              <div>
-                <label className="label-text" htmlFor="prod-coverage">
-                  Coverage per Box (sq ft)
-                </label>
-                <input
-                  id="prod-coverage"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="input-field figure"
-                  value={form.coveragePerBox}
-                  onChange={(e) => handleChange('coveragePerBox', e.target.value)}
-                  placeholder="e.g. 15"
-                />
-              </div>
-
-              <div>
-                <label className="label-text" htmlFor="prod-conversion">
-                  Conversion Factor <span className="text-ink-muted dark:text-dark-muted font-normal">— base units per package</span>
-                </label>
-                <input
-                  id="prod-conversion"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="input-field figure"
-                  value={form.conversionFactor}
-                  onChange={(e) => handleChange('conversionFactor', e.target.value)}
-                  placeholder="e.g. 10"
-                />
-              </div>
-            </>
+          <AreaCoverageFields
+            enabled={enableCoverageTracking}
+            onEnabledChange={setEnableCoverageTracking}
+            quantity={form.coverageQuantity}
+            unitId={form.coverageUomId}
+            units={units}
+            saleUnitLabel={units.find((u) => u.id === form.baseUomId)?.name?.toLowerCase() || 'sale unit'}
+            onChange={handleChange}
+          />
+          {enableCoverageTracking && (errors.coverageQuantity || errors.coverageUomId) && (
+            <div className="sm:col-span-2 -mt-2">
+              {errors.coverageQuantity && <p className="text-xs text-rose dark:text-dark-rose">{errors.coverageQuantity}</p>}
+              {errors.coverageUomId && <p className="text-xs text-rose dark:text-dark-rose">{errors.coverageUomId}</p>}
+            </div>
           )}
 
           <div className="sm:col-span-2">

@@ -8,7 +8,7 @@ import { productService } from '../../services/productService'
 import { kitService } from '../../services/kitService'
 import { useBarcodeScanner } from '../../hooks/useBarcodeScanner'
 import VariantBatchSelectorModal from './VariantBatchSelectorModal'
-import AreaToBoxModal from './AreaToBoxModal'
+import AreaCoverageCalculatorModal from './AreaCoverageCalculatorModal'
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/api$/, '')
 function toImageUrl(path) {
@@ -30,19 +30,20 @@ const VIEW_MODES = [
  * Left-hand panel of the POS screen. Two tabs:
  *  - Products: search/scan a product and add it to the cart. Batch-tracked
  *    products (FR: Batch & Lot Tracking) open a batch picker instead of
- *    adding directly; products with a box coverage set (FR: Area-to-Box
- *    Calculator) get a calculator shortcut alongside the regular add.
+ *    adding directly; products with an area-coverage rule set (FR: Area
+ *    Coverage Calculator) get a calculator shortcut alongside the regular
+ *    add.
  *  - Kits: sell a bundle (FR: Kitting & Bundling) as one line.
  *
- * A product can be BOTH batch-tracked AND have a box-coverage calculator
- * (e.g. ceramic tiles sold by the box, where each shipment/lot can have a
- * slightly different shade). In that case the two flows are chained: the
- * area calculator only computes a quantity, it never adds to the cart by
- * itself — for a batch-tracked product it hands off to the batch picker
- * with that quantity pre-filled, so the cart line always ends up with both
- * a quantity AND a batchId. Without a batchId, checkout is rejected by the
- * backend for batch-tracked products, so this hand-off is required, not
- * just a nicety.
+ * A product can be BOTH batch-tracked AND have an area-coverage
+ * calculator (e.g. ceramic tiles sold by the carton, where each shipment/
+ * lot can have a slightly different shade). In that case the two flows
+ * are chained: the area calculator only computes a quantity, it never
+ * adds to the cart by itself — for a batch-tracked product it hands off
+ * to the batch picker with that quantity pre-filled, so the cart line
+ * always ends up with both a quantity AND a batchId. Without a batchId,
+ * checkout is rejected by the backend for batch-tracked products, so this
+ * hand-off is required, not just a nicety.
  *
  * Also listens for a physical barcode scanner (see useBarcodeScanner) —
  * works with any USB/Bluetooth HID scanner automatically, nothing to
@@ -206,7 +207,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
             </span>
           </div>
         </button>
-        {product.coveragePerBox && !outOfStock && (
+        {product.coverageQuantity && product.coverageUomId && !outOfStock && (
           <button
             type="button"
             onClick={() => setAreaModalProduct(product)}
@@ -263,7 +264,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
             <p className="text-xs text-ink-muted dark:text-dark-muted figure">{outOfStock ? 'Out of stock' : `${product.stock} left`}</p>
           </div>
         </button>
-        {product.coveragePerBox && !outOfStock && (
+        {product.coverageQuantity && product.coverageUomId && !outOfStock && (
           <button
             type="button"
             onClick={() => setAreaModalProduct(product)}
@@ -464,21 +465,21 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
         }}
       />
 
-      <AreaToBoxModal
+      <AreaCoverageCalculatorModal
         isOpen={Boolean(areaModalProduct)}
         onClose={() => setAreaModalProduct(null)}
         product={areaModalProduct}
-        onConfirm={(boxes) => {
+        onConfirm={(quantity) => {
           if (areaModalProduct && needsPicker(areaModalProduct)) {
             // Batch- and/or variant-tracked product: the area calculator
             // only computes the quantity. Hand off to the picker with that
             // quantity pre-filled so the cart line ends up with a
             // quantity AND whichever of batchId/variantId this product
             // requires — otherwise checkout will reject the line.
-            setPickerInitialQty(boxes)
+            setPickerInitialQty(quantity)
             setPickerProduct(areaModalProduct)
           } else {
-            onAddProduct(areaModalProduct, { quantity: boxes })
+            onAddProduct(areaModalProduct, { quantity })
           }
           setAreaModalProduct(null)
         }}

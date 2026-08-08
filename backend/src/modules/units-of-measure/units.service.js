@@ -1,104 +1,104 @@
-
 const prisma = require('../../config/db');
 
-// Business-managed units of measure — replaces the old fixed UomType
-// enum (BOX/SQ_FT/SQ_M/LENGTH/BUNDLE/PIECE). Same shape as
-// roles.service.js: no "built-in" unit protected from editing, an admin
-// builds whatever list this business actually needs.
+const MEASUREMENT_TYPES = new Set(['COUNT', 'AREA', 'LENGTH', 'WEIGHT', 'VOLUME', 'OTHER']);
+
 class UnitsOfMeasureService {
   async getAll() {
     const units = await prisma.unitOfMeasure.findMany({
-      include: { _count: { select: { products: true } } },
+      include: {
+        _count: { select: { products: true, coverage_products: true } },
+      },
       orderBy: { name: 'asc' },
     });
-    return units.map(this.toDTO);
+    return units.map((unit) => this.toDTO(unit));
   }
 
-  async create({ name, abbreviation }) {
+  validate({ name, abbreviation, measurementType }) {
     const trimmedName = (name || '').trim();
-    const trimmedAbbr = (abbreviation || '').trim();
-    if (!trimmedName) {
-      const err = new Error('Unit name is required.');
-      err.status = 400;
-      throw err;
+    const trimmedAbbreviation = (abbreviation || '').trim();
+    const type = measurementType || 'COUNT';
+    if (!trimmedName || !trimmedAbbreviation) {
+      const error = new Error('Unit name and abbreviation are required.');
+      error.status = 400;
+      throw error;
     }
-    if (!trimmedAbbr) {
-      const err = new Error('An abbreviation is required (e.g. "pc" for Piece) — it\'s what actually shows on receipts and the POS cart.');
-      err.status = 400;
-      throw err;
+    if (!MEASUREMENT_TYPES.has(type)) {
+      const error = new Error('Choose a valid measurement type.');
+      error.status = 400;
+      throw error;
     }
-    const existing = await prisma.unitOfMeasure.findFirst({ where: { name: trimmedName } });
+    return { name: trimmedName, abbreviation: trimmedAbbreviation, measurementType: type };
+  }
+
+  async create(values) {
+    const data = this.validate(values);
+    const existing = await prisma.unitOfMeasure.findFirst({ where: { name: data.name } });
     if (existing) {
-      const err = new Error(`A unit named "${trimmedName}" already exists.`);
-      err.status = 409;
-      throw err;
+      const error = new Error(`A unit named "${data.name}" already exists.`);
+      error.status = 409;
+      throw error;
     }
     const unit = await prisma.unitOfMeasure.create({
-      data: { name: trimmedName, abbreviation: trimmedAbbr },
-      include: { _count: { select: { products: true } } },
+      data: { name: data.name, abbreviation: data.abbreviation, measurement_type: data.measurementType },
+      include: { _count: { select: { products: true, coverage_products: true } } },
     });
     return this.toDTO(unit);
   }
 
-  async update(id, { name, abbreviation }) {
-    const unit = await prisma.unitOfMeasure.findUnique({ where: { id } });
+  async update(id, values) {
+    const unit = await prisma.unitOfMeasure.findUnique({
+      where: { id },
+      include: { _count: { select: { products: true, coverage_products: true } } },
+    });
     if (!unit) {
-      const err = new Error('Unit not found');
-      err.status = 404;
-      throw err;
+      const error = new Error('Unit not found.');
+      error.status = 404;
+      throw error;
     }
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (!trimmed) {
-        const err = new Error('Unit name is required.');
-        err.status = 400;
-        throw err;
-      }
-      const conflict = await prisma.unitOfMeasure.findFirst({ where: { name: trimmed } });
-      if (conflict && conflict.id !== id) {
-        const err = new Error(`A unit named "${trimmed}" already exists.`);
-        err.status = 409;
-        throw err;
-      }
+    const nextType = values.measurementType ?? unit.measurement_type;
+    if (!MEASUREMENT_TYPES.has(nextType)) {
+      const error = new Error('Choose a valid measurement type.');
+      error.status = 400;
+      throw error;
+    }
+    if (nextType !== unit.measurement_type && (unit._count.products > 0 || unit._count.coverage_products > 0)) {
+      const error = new Error('The measurement type cannot change after a product uses this unit.');
+      error.status = 409;
+      throw error;
+    }
+    const name = values.name === undefined ? unit.name : (values.name || '').trim();
+    const abbreviation = values.abbreviation === undefined ? unit.abbreviation : (values.abbreviation || '').trim();
+    this.validate({ name, abbreviation, measurementType: nextType });
+    const conflict = await prisma.unitOfMeasure.findFirst({ where: { name } });
+    if (conflict && conflict.id !== id) {
+      const error = new Error(`A unit named "${name}" already exists.`);
+      error.status = 409;
+      throw error;
     }
     const updated = await prisma.unitOfMeasure.update({
       where: { id },
-      data: {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(abbreviation !== undefined && { abbreviation: abbreviation.trim() }),
-      },
-      include: { _count: { select: { products: true } } },
+      data: { name, abbreviation, measurement_type: nextType },
+      include: { _count: { select: { products: true, coverage_products: true } } },
     });
     return this.toDTO(updated);
   }
 
   async remove(id) {
     const unit = await prisma.unitOfMeasure.findUnique({
-      where: { id },
-      include: { _count: { select: { products: true } } },
+      where: { id }, include: { _count: { select: { products: true, coverage_products: true } } },
     });
-    if (!unit) {
-      const err = new Error('Unit not found');
-      err.status = 404;
-      throw err;
-    }
-    if (unit._count.products > 0) {
-      const err = new Error(
-        `Cannot delete — ${unit._count.products} product(s) still use this unit. Change their unit first.`,
-      );
-      err.status = 409;
-      throw err;
+    if (!unit) { const error = new Error('Unit not found.'); error.status = 404; throw error; }
+    if (unit._count.products || unit._count.coverage_products) {
+      const error = new Error('Cannot delete a unit still used by a product.'); error.status = 409; throw error;
     }
     await prisma.unitOfMeasure.delete({ where: { id } });
   }
 
   toDTO(unit) {
     return {
-      id: unit.id,
-      name: unit.name,
-      abbreviation: unit.abbreviation,
-      isActive: unit.is_active,
-      productCount: unit._count?.products ?? 0,
+      id: unit.id, name: unit.name, abbreviation: unit.abbreviation,
+      measurementType: unit.measurement_type, isActive: unit.is_active,
+      productCount: unit._count?.products ?? 0, coverageProductCount: unit._count?.coverage_products ?? 0,
     };
   }
 }

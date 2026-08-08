@@ -32,6 +32,10 @@ const PERMISSIONS = {
   // Variations (e.g. Color, Diameter) — reusable, defined once and
   // reused across products, managed on their own page.
   VARIATIONS_MANAGE: 'VARIATIONS_MANAGE',
+  // Units of measure (e.g. Box, Sqft) — reusable, defined once and
+  // reused across products, managed on their own page. Same shape as
+  // VARIATIONS_MANAGE above.
+  UNITS_MANAGE: 'UNITS_MANAGE',
   // Customers
   CUSTOMERS_MANAGE: 'CUSTOMERS_MANAGE',
   // Suppliers
@@ -105,6 +109,7 @@ const PERMISSION_CATALOG = [
   { key: PERMISSIONS.BARCODES_MANAGE, label: 'Generate & print barcode labels', group: 'Products', module: 'PRODUCTS' },
   { key: PERMISSIONS.CATEGORIES_MANAGE, label: 'Manage categories', group: 'Products', module: 'PRODUCTS' },
   { key: PERMISSIONS.VARIATIONS_MANAGE, label: 'Manage variations (e.g. Color, Diameter)', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.UNITS_MANAGE, label: 'Manage units of measure', group: 'Products', module: 'PRODUCTS' },
   { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', group: 'Inventory', module: 'INVENTORY' },
   { key: PERMISSIONS.KITS_MANAGE, label: 'Manage kits & bundles', group: 'Inventory', module: 'KITS' },
   { key: PERMISSIONS.WAREHOUSES_MANAGE, label: 'Manage warehouses', group: 'Inventory', module: 'INVENTORY' },
