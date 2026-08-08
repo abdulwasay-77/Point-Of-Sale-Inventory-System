@@ -13,6 +13,9 @@ class ChatbotController {
       message,
       pendingAction: pendingAction || null,
       user: req.user,
+      // Module availability is live request state, not a claim cached in
+      // the JWT. This keeps chatbot answers aligned with route-level gates.
+      business: req.business,
     });
     success(res, result);
   });

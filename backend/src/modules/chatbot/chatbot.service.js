@@ -2,7 +2,7 @@
 const prisma = require('../../config/db');
 const { findBestMatch } = require('../../utils/fuzzyMatch');
 const { userHasPermission } = require('../../utils/effectivePermissions');
-const { PERMISSIONS } = require('../../config/permissions');
+const { PERMISSIONS, PERMISSION_MODULE_MAP } = require('../../config/permissions');
 const ProductsService = require('../products/products.service');
 const InventoryService = require('../inventory/inventory.service');
 const ReportsService = require('../reports/reports.service');
@@ -10,6 +10,14 @@ const DashboardService = require('../dashboard/dashboard.service');
 const PurchasesService = require('../purchases/purchases.service');
 const CustomersService = require('../customers/customers.service');
 const SuppliersService = require('../suppliers/suppliers.service');
+const VariationsService = require('../variations/variations.service');
+const KitsService = require('../kits/kits.service');
+const WarehousesService = require('../warehouses/warehouses.service');
+const TransfersService = require('../transfers/transfers.service');
+const PayrollService = require('../payroll/payroll.service');
+const ExpensesService = require('../expenses/expenses.service');
+const CreditService = require('../credit/credit.service');
+const InstallmentsService = require('../installments/installments.service');
 const { getDefaultWarehouseId } = require('../../utils/defaultWarehouse');
 
 const AFFIRMATIVE = /^(yes|yep|yeah|y|confirm|do it|go ahead|sure|ok|okay)\.?!?$/i;
@@ -31,44 +39,64 @@ const SKIP = /^(skip|none|n\/a|-)$/i;
  * Every "answer" intent queries live data — nothing here is hardcoded.
  */
 class ChatbotService {
-  async handleMessage({ message, pendingAction, user }) {
+  async handleMessage({ message, pendingAction, user, business }) {
     const trimmed = (message || '').trim();
 
     if (pendingAction?.mode === 'collect') {
-      return this.continueCollection(pendingAction, trimmed, user);
+      return this.continueCollection(pendingAction, trimmed, user, business);
     }
 
     if (pendingAction?.mode === 'confirm') {
-      if (AFFIRMATIVE.test(trimmed)) return this.executeAction(pendingAction, user);
+      if (AFFIRMATIVE.test(trimmed)) return this.executeAction(pendingAction, user, business);
       if (NEGATIVE.test(trimmed)) return { reply: 'Okay, cancelled — nothing was changed.', pendingAction: null };
       // User asked something else instead of confirming — drop the pending
       // action and treat this as a brand new message rather than erroring.
     }
 
-    return this.matchIntent(trimmed, user);
+    const result = await this.matchIntent(trimmed, user, business, pendingAction?.session);
+    return this.attachSession(result, pendingAction?.session);
   }
 
-  async matchIntent(text, user) {
+  async matchIntent(text, user, business, session) {
     const msg = text.toLowerCase();
+
+    const contextual = await this.contextFollowUp(msg, user, business, session);
+    if (contextual) return contextual;
 
     for (const intent of this.getIntents()) {
       const match = intent.pattern.exec(msg);
       if (match) {
-        return intent.handler(match, user, text);
+        return intent.handler(match, user, business, text, session);
       }
     }
 
-    return {
-      reply:
-        "I didn't quite catch that. I can help with things like: stock levels, low stock, product prices, today's/this month's sales, customer or supplier lookups, recording a purchase, adjusting stock, adding a customer, or how-to questions (e.g. \"how do I record a purchase?\").",
-      pendingAction: null,
-    };
+    return this.helpReply(user, business, "I didn't quite catch that.");
   }
 
   getIntents() {
     return [
       { pattern: /^(hi|hello|hey|good (morning|afternoon|evening))\b/i, handler: this.greet.bind(this) },
       { pattern: /what can you do|help me|^help$/i, handler: this.greet.bind(this) },
+
+      { pattern: /what needs my attention|morning briefing|daily summary/i, handler: this.attentionDigest.bind(this) },
+      { pattern: /what variations|list variations|variations do we have/i, handler: this.variationsList.bind(this) },
+      { pattern: /values? for\s+(.+)/i, handler: this.variationValues.bind(this) },
+      { pattern: /what'?s? in (?:kit|bundle)\s+(.+)/i, handler: this.kitContents.bind(this) },
+      { pattern: /can we build\s+(\d+)\s+(?:of\s+)?(.+)/i, handler: this.kitAvailability.bind(this) },
+      { pattern: /stock of\s+(.+?)\s+in\s+(.+)/i, handler: this.warehouseStock.bind(this) },
+      { pattern: /stock across warehouses|warehouse stock/i, handler: this.warehouseOverview.bind(this) },
+      { pattern: /pending transfers?|unreceived transfers?/i, handler: this.pendingTransfers.bind(this) },
+      { pattern: /this month'?s payroll|monthly payroll|payroll total/i, handler: this.monthlyPayroll.bind(this) },
+      { pattern: /(.+?)'?s salary/i, handler: this.employeeSalary.bind(this) },
+      { pattern: /expense budget status|budget status/i, handler: this.expenseBudgetStatus.bind(this) },
+      { pattern: /who'?s? over budget this month|over budget/i, handler: this.expensesOverBudget.bind(this) },
+      { pattern: /(.+?)'?s expenses? this month/i, handler: this.employeeExpenses.bind(this) },
+      { pattern: /who owes us money|total outstanding credit|outstanding credit$/i, handler: this.creditOutstanding.bind(this) },
+      { pattern: /outstanding credit for\s+(.+)/i, handler: this.customerCredit.bind(this) },
+      { pattern: /overdue installments?/i, handler: this.overdueInstallments.bind(this) },
+      { pattern: /installment plans? for\s+(.+)/i, handler: this.customerInstallments.bind(this) },
+      { pattern: /how many active installment plans?/i, handler: this.activeInstallments.bind(this) },
+      { pattern: /undo (?:my )?last action/i, handler: this.undoLastAction.bind(this) },
 
       { pattern: /low stock|running low|need(s)? (a )?restock|reorder/i, handler: this.lowStock.bind(this) },
       {
@@ -133,12 +161,65 @@ class ChatbotService {
 
   // ---------- Read-only intents ----------
 
-  async greet() {
+  async greet(_match, user, business) {
+    return this.helpReply(user, business, 'Hi!');
+    /*
     return {
       reply:
         "Hi! I can answer questions about stock, prices, sales, customers and suppliers, or perform a few limited actions (adjusting stock, recording a purchase, adding a customer) if you have permission — I'll ask for any missing details and always confirm before doing anything. Try \"how much Wash Basin do we have\" or just \"add a customer\".",
       pendingAction: null,
     };
+    */
+  }
+
+  /** Checks the same permission-to-module mapping used by the role UI,
+   * so the chatbot never creates a second, drifting feature map. */
+  async canAccess(user, business, permission) {
+    const requiredModule = PERMISSION_MODULE_MAP[permission];
+    if (requiredModule && !business?.enabled_modules?.includes(requiredModule)) return { allowed: false, reason: 'module' };
+    return (await userHasPermission(user.userId, permission)) ? { allowed: true } : { allowed: false, reason: 'permission' };
+  }
+
+  async requireAccess(user, business, permission) {
+    const access = await this.canAccess(user, business, permission);
+    if (access.allowed) return null;
+    return { reply: access.reason === 'module' ? "That feature isn't part of your business plan." : "You don't have permission to view that information.", pendingAction: null };
+  }
+
+  async helpReply(user, business, prefix) {
+    const topics = [
+      ['stock, low-stock alerts, and product prices', PERMISSIONS.INVENTORY_VIEW], ['sales and dashboard summaries', PERMISSIONS.SALES_VIEW],
+      ['customers and suppliers', PERMISSIONS.CUSTOMERS_MANAGE], ['variations', PERMISSIONS.VARIATIONS_MANAGE], ['kits and bundles', PERMISSIONS.KITS_MANAGE],
+      ['warehouses and transfers', PERMISSIONS.TRANSFERS_VIEW], ['payroll', PERMISSIONS.PAYROLL_MANAGE], ['expense budgets', PERMISSIONS.EXPENSES_MANAGE],
+      ['customer credit', PERMISSIONS.CREDIT_MANAGE], ['installment plans', PERMISSIONS.INSTALLMENTS_MANAGE],
+    ];
+    const allowed = [];
+    for (const [label, permission] of topics) if ((await this.canAccess(user, business, permission)).allowed) allowed.push(label);
+    const actions = [];
+    for (const [label, permission] of [['adjust stock', PERMISSIONS.PRODUCTS_EDIT], ['record purchases', PERMISSIONS.PURCHASES_CREATE], ['add customers', PERMISSIONS.CUSTOMERS_MANAGE]]) {
+      if ((await this.canAccess(user, business, permission)).allowed && (await userHasPermission(user.userId, PERMISSIONS.CHATBOT_ACTIONS))) actions.push(label);
+    }
+    return { reply: `${prefix} I can help with ${allowed.length ? allowed.join(', ') : 'the features your account can access'}.${actions.length ? ` I can also ${actions.join(', ')} after you explicitly confirm.` : ''}`, pendingAction: null };
+  }
+
+  /** The client already round-trips pendingAction, so a small context-only
+   * state object gives deterministic pronouns without a database session. */
+  attachSession(result, previousSession) {
+    if (result.pendingAction?.mode === 'confirm' || result.pendingAction?.mode === 'collect') {
+      return { ...result, pendingAction: { ...result.pendingAction, session: previousSession } };
+    }
+    const session = { ...(previousSession || {}) };
+    if (result.context) session.entity = result.context;
+    return { ...result, pendingAction: Object.keys(session).length ? { mode: 'context', session } : null };
+  }
+
+  async contextFollowUp(msg, _user, _business, session) {
+    const entity = session?.entity;
+    if (entity?.type !== 'product' || !/\b(it|its|that)\b/.test(msg)) return null;
+    const product = await ProductsService.getById(entity.id);
+    if (/price|cost/.test(msg)) return { reply: `${product.name} is priced at ${product.price} (PKR).`, data: product, context: entity, pendingAction: null };
+    if (/stock|how many/.test(msg)) return { reply: `${product.name} (${product.sku}) currently has ${product.stock} in stock.`, data: product, context: entity, pendingAction: null };
+    return null;
   }
 
   async lowStock() {
@@ -181,7 +262,7 @@ class ChatbotService {
     const p = found.match;
     return {
       reply: `${p.name} (${p.sku}) currently has ${p.stock} in stock${p.lowStock ? " — that's below the reorder threshold." : '.'}`,
-      data: p,
+      data: p, context: { type: 'product', id: p.id, name: p.name },
       pendingAction: null,
     };
   }
@@ -191,7 +272,7 @@ class ChatbotService {
     const found = await this.resolveProduct(name);
     if (!found) return { reply: `I couldn't find a product matching "${name}".`, pendingAction: null };
     const p = found.match;
-    return { reply: `${p.name} is priced at ${p.price} (PKR).`, data: p, pendingAction: null };
+    return { reply: `${p.name} is priced at ${p.price} (PKR).`, data: p, context: { type: 'product', id: p.id, name: p.name }, pendingAction: null };
   }
 
   async productInfo(match) {
@@ -201,7 +282,7 @@ class ChatbotService {
     const p = found.match;
     return {
       reply: `${p.name} — SKU ${p.sku}, category ${p.category}, priced at ${p.price} PKR, ${p.stock} in stock.`,
-      data: p,
+      data: p, context: { type: 'product', id: p.id, name: p.name },
       pendingAction: null,
     };
   }
@@ -263,6 +344,144 @@ class ChatbotService {
       return { reply: `I don't track a specific supplier per product yet — check the Purchases page for past orders of ${productMatch.match.name}.`, pendingAction: null };
     }
     return { reply: `I couldn't find a supplier or product matching "${name}".`, pendingAction: null };
+  }
+
+  async variationsList(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.VARIATIONS_MANAGE); if (denied) return denied;
+    const variations = await VariationsService.getAll();
+    return { reply: variations.length ? `Variations: ${variations.map((v) => `${v.name} (${v.values.length} values)`).join(', ')}.` : 'No variations have been created yet.', pendingAction: null };
+  }
+
+  async variationValues(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.VARIATIONS_MANAGE); if (denied) return denied;
+    const variations = await VariationsService.getAll(); const found = findBestMatch(match[1].trim(), variations, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find a variation matching "${match[1].trim()}".`, pendingAction: null };
+    const v = found.match; return { reply: `${v.name}: ${v.values.map((x) => x.value).join(', ') || 'no values yet'}.`, data: v, pendingAction: null };
+  }
+
+  async kitContents(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.KITS_MANAGE); if (denied) return denied;
+    const kits = await KitsService.getAll(); const found = findBestMatch(match[1].trim(), kits, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find a kit matching "${match[1].trim()}".`, pendingAction: null };
+    const k = found.match; return { reply: `${k.name} contains: ${k.components.map((c) => `${c.quantity} × ${c.product}`).join(', ')}. You can build ${k.availableQty} now.`, data: k, pendingAction: null };
+  }
+
+  async kitAvailability(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.KITS_MANAGE); if (denied) return denied;
+    const qty = Number(match[1]); const kits = await KitsService.getAll(); const found = findBestMatch(match[2].trim(), kits, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find a kit matching "${match[2].trim()}".`, pendingAction: null };
+    const k = found.match; return { reply: k.availableQty >= qty ? `Yes — ${k.name} can build ${qty}; ${k.availableQty} are available from current component stock.` : `Not yet — ${k.name} can build ${k.availableQty}, short of the ${qty} requested.`, data: k, pendingAction: null };
+  }
+
+  async warehouseStock(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.WAREHOUSES_MANAGE); if (denied) return denied;
+    const product = await this.resolveProduct(match[1]); if (!product) return { reply: `I couldn't find a product matching "${match[1]}".`, pendingAction: null };
+    const warehouses = await WarehousesService.getAll(); const warehouse = findBestMatch(match[2].trim(), warehouses, { minScore: 0.4 });
+    if (!warehouse) return { reply: `I couldn't find a warehouse matching "${match[2].trim()}".`, pendingAction: null };
+    const level = product.match.byWarehouse.find((x) => x.warehouseId === warehouse.match.id);
+    return { reply: `${product.match.name} has ${level?.quantity || 0} in ${warehouse.match.name}.`, data: { product: product.match, warehouse: warehouse.match }, pendingAction: null };
+  }
+
+  async warehouseOverview(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.WAREHOUSES_MANAGE); if (denied) return denied;
+    const warehouses = await WarehousesService.getAll();
+    return { reply: warehouses.length ? `Warehouse stock: ${warehouses.map((w) => `${w.name} (${w.totalStock})`).join(', ')}.` : 'No warehouses have been created yet.', data: warehouses, pendingAction: null };
+  }
+
+  async pendingTransfers(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.TRANSFERS_VIEW); if (denied) return denied;
+    const transfers = await TransfersService.getAll(); const pending = transfers.filter((t) => !['COMPLETED', 'RECEIVED'].includes(t.status));
+    return { reply: pending.length ? `${pending.length} transfer(s) are pending: ${pending.slice(0, 5).map((t) => `${t.product} (${t.from} → ${t.to})`).join(', ')}.` : 'There are no pending transfers.', data: pending, pendingAction: null };
+  }
+
+  async monthlyPayroll(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.PAYROLL_MANAGE); if (denied) return denied;
+    const now = new Date(); const records = await PayrollService.getRecords(); const current = records.filter((r) => new Date(r.periodStart).getMonth() === now.getMonth() && new Date(r.periodStart).getFullYear() === now.getFullYear());
+    const total = current.reduce((sum, r) => sum + r.totalPayable, 0); return { reply: `This month's payroll: ${current.length} record(s), totaling ${total.toFixed(2)} PKR.`, data: current, pendingAction: null };
+  }
+
+  async employeeSalary(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.PAYROLL_MANAGE); if (denied) return denied;
+    const employees = await PayrollService.getAllEmployees(); const found = findBestMatch(match[1].trim(), employees, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find an employee matching "${match[1].trim()}".`, pendingAction: null };
+    const e = found.match; return { reply: `${e.name}'s base salary is ${e.baseSalary.toFixed(2)} PKR.`, data: e, pendingAction: null };
+  }
+
+  async expenseBudgetStatus(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.EXPENSES_MANAGE); if (denied) return denied;
+    const budget = await ExpensesService.getBudgetSummary(); return { reply: `Expense budget: ${budget.currentBalance.toFixed(2)} PKR remaining of ${budget.totalAmount.toFixed(2)} PKR (${budget.spent.toFixed(2)} spent).`, data: budget, pendingAction: null };
+  }
+
+  async expensesOverBudget(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.EXPENSES_MANAGE); if (denied) return denied;
+    const budget = await ExpensesService.getBudgetSummary(); return { reply: budget.currentBalance < 0 ? `The expense budget is overrun by ${Math.abs(budget.currentBalance).toFixed(2)} PKR.` : 'No expense budget overrun — the current budget is within its limit.', data: budget, pendingAction: null };
+  }
+
+  async employeeExpenses(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.EXPENSES_MANAGE); if (denied) return denied;
+    const employees = await PayrollService.getAllEmployees(); const found = findBestMatch(match[1].trim(), employees, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find an employee matching "${match[1].trim()}".`, pendingAction: null };
+    const history = await ExpensesService.getHistory({ employeeId: found.match.id, range: 'monthly' }); return { reply: `${found.match.name}'s expenses this month: ${history.summary.count} item(s), ${history.summary.totalSpent.toFixed(2)} PKR.`, data: history, pendingAction: null };
+  }
+
+  async creditOutstanding(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.CREDIT_MANAGE); if (denied) return denied;
+    const rows = await CreditService.getOutstanding(); const total = rows.reduce((sum, r) => sum + r.balanceDue, 0); const overdue = rows.filter((r) => r.isOverdue);
+    return { reply: rows.length ? `${rows.length} customer credit balance(s) total ${total.toFixed(2)} PKR; ${overdue.length} are overdue. ${rows.slice(0, 5).map((r) => `${r.customerName} (${r.balanceDue.toFixed(2)})`).join(', ')}.` : 'No customers currently owe a credit balance.', data: rows, pendingAction: null };
+  }
+
+  async customerCredit(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.CREDIT_MANAGE); if (denied) return denied;
+    const customers = await CustomersService.getAll(); const found = findBestMatch(match[1].trim(), customers, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find a customer matching "${match[1].trim()}".`, pendingAction: null };
+    const credit = await CreditService.getByCustomer(found.match.id); const outstanding = credit.invoices.reduce((sum, i) => sum + i.balanceDue, 0);
+    return { reply: `${found.match.name} has ${outstanding.toFixed(2)} PKR outstanding credit.`, data: credit, pendingAction: null };
+  }
+
+  async overdueInstallments(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.INSTALLMENTS_MANAGE); if (denied) return denied;
+    const plans = await InstallmentsService.getAll(); const overdue = plans.filter((p) => p.installments.some((i) => i.isOverdue));
+    return { reply: overdue.length ? `${overdue.length} installment plan(s) have overdue payments: ${overdue.slice(0, 5).map((p) => p.customerName).join(', ')}.` : 'There are no overdue installment payments.', data: overdue, pendingAction: null };
+  }
+
+  async customerInstallments(match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.INSTALLMENTS_MANAGE); if (denied) return denied;
+    const customers = await CustomersService.getAll(); const found = findBestMatch(match[1].trim(), customers, { minScore: 0.4 });
+    if (!found) return { reply: `I couldn't find a customer matching "${match[1].trim()}".`, pendingAction: null };
+    const plans = (await InstallmentsService.getAll()).filter((p) => p.customerId === found.match.id); return { reply: plans.length ? `${found.match.name} has ${plans.length} installment plan(s): ${plans.map((p) => `${p.status} (${p.remainingCount} remaining)`).join(', ')}.` : `${found.match.name} has no installment plans.`, data: plans, pendingAction: null };
+  }
+
+  async activeInstallments(_match, user, business) {
+    const denied = await this.requireAccess(user, business, PERMISSIONS.INSTALLMENTS_MANAGE); if (denied) return denied;
+    const plans = await InstallmentsService.getAll(); const active = plans.filter((p) => p.status !== 'COMPLETED'); return { reply: `There are ${active.length} active installment plan(s).`, data: active, pendingAction: null };
+  }
+
+  /** Builds the briefing from the same module services as the individual
+   * answers. Each probe is independently gated so unavailable areas stay
+   * invisible instead of appearing as misleading empty sections. */
+  async attentionDigest(_match, user, business) {
+    const sections = [];
+    if ((await this.canAccess(user, business, PERMISSIONS.INVENTORY_VIEW)).allowed) {
+      const low = await InventoryService.getLowStock();
+      if (low.length) sections.push(`Low stock (${low.length}): ${low.slice(0, 5).map((p) => p.name).join(', ')}`);
+    }
+    if ((await this.canAccess(user, business, PERMISSIONS.INSTALLMENTS_MANAGE)).allowed) {
+      const overdue = (await InstallmentsService.getAll()).filter((p) => p.installments.some((i) => i.isOverdue));
+      if (overdue.length) sections.push(`Overdue installments (${overdue.length}): ${overdue.slice(0, 5).map((p) => p.customerName).join(', ')}`);
+    }
+    if ((await this.canAccess(user, business, PERMISSIONS.CREDIT_MANAGE)).allowed) {
+      const overdue = (await CreditService.getOutstanding()).filter((r) => r.isOverdue);
+      if (overdue.length) sections.push(`Overdue customer credit (${overdue.length}): ${overdue.slice(0, 5).map((r) => `${r.customerName} (${r.balanceDue.toFixed(2)} PKR)`).join(', ')}`);
+    }
+    if ((await this.canAccess(user, business, PERMISSIONS.EXPENSES_MANAGE)).allowed) {
+      const budget = await ExpensesService.getBudgetSummary();
+      if (budget.currentBalance < 0) sections.push(`Expense budget overrun: ${Math.abs(budget.currentBalance).toFixed(2)} PKR`);
+    }
+    if ((await this.canAccess(user, business, PERMISSIONS.PURCHASES_VIEW)).allowed) {
+      const purchases = await PurchasesService.getAll(); const pending = purchases.filter((p) => !['RECEIVED', 'COMPLETED'].includes(p.status));
+      if (pending.length) sections.push(`Pending purchase orders (${pending.length}): ${pending.slice(0, 5).map((p) => p.poNumber).join(', ')}`);
+    }
+    return { reply: sections.length ? `Here is what needs attention:\n${sections.map((s) => `• ${s}`).join('\n')}` : 'Everything that you can view looks in good shape — nothing needs attention right now.', pendingAction: null };
   }
 
   howTo(instructions) {
@@ -481,7 +700,7 @@ class ChatbotService {
 
   // ---------- Action execution ----------
 
-  async executeAction(pendingAction, user) {
+  async executeAction(pendingAction, user, business) {
     const permissionMap = {
       ADJUST_STOCK: PERMISSIONS.PRODUCTS_EDIT,
       SET_STOCK: PERMISSIONS.PRODUCTS_EDIT,
@@ -489,7 +708,7 @@ class ChatbotService {
       CREATE_CUSTOMER: PERMISSIONS.CUSTOMERS_MANAGE,
     };
 
-    const hasChatbotActions = await userHasPermission(user.userId, user.role, PERMISSIONS.CHATBOT_ACTIONS);
+    const hasChatbotActions = await userHasPermission(user.userId, PERMISSIONS.CHATBOT_ACTIONS);
     if (!hasChatbotActions) {
       return {
         reply: "You don't have permission to let the chatbot perform actions. Ask an admin to grant it, or do this from the relevant page instead.",
@@ -498,27 +717,47 @@ class ChatbotService {
     }
 
     const requiredPermission = permissionMap[pendingAction.type];
-    const hasPermission = requiredPermission ? await userHasPermission(user.userId, user.role, requiredPermission) : false;
+    const access = requiredPermission ? await this.canAccess(user, business, requiredPermission) : { allowed: false };
+    const hasPermission = access.allowed;
     if (!hasPermission) {
       return { reply: "You don't have permission to do that. Ask an admin, or use the relevant page instead.", pendingAction: null };
     }
 
     try {
+      let result;
       switch (pendingAction.type) {
         case 'ADJUST_STOCK':
-          return await this.execAdjustStock(pendingAction.payload, user);
+          result = await this.execAdjustStock(pendingAction.payload, user);
+          return this.attachSession(result, { lastAction: { type: 'ADJUST_STOCK', payload: pendingAction.payload } });
         case 'SET_STOCK':
-          return await this.execSetStock(pendingAction.payload, user);
+          result = await this.execSetStock(pendingAction.payload, user);
+          return { ...result, pendingAction: { mode: 'context', session: { lastAction: { type: 'UNSAFE', label: 'setting stock' } } } };
         case 'RECORD_PURCHASE':
-          return await this.execRecordPurchase(pendingAction.payload, user);
+          result = await this.execRecordPurchase(pendingAction.payload, user);
+          return { ...result, pendingAction: { mode: 'context', session: { lastAction: { type: 'UNSAFE', label: 'recording a purchase' } } } };
         case 'CREATE_CUSTOMER':
-          return await this.execCreateCustomer(pendingAction.payload);
+          result = await this.execCreateCustomer(pendingAction.payload);
+          return { ...result, pendingAction: { mode: 'context', session: { lastAction: { type: 'UNSAFE', label: 'creating a customer' } } } };
         default:
           return { reply: "I don't recognize that action anymore — please ask again.", pendingAction: null };
       }
     } catch (error) {
       return { reply: `That didn't work: ${error.message}`, pendingAction: null };
     }
+  }
+
+  async undoLastAction(_match, user, business, _text, session) {
+    const last = session?.lastAction;
+    if (!last) return { reply: "I don't have a chatbot action from this session to undo.", pendingAction: null };
+    if (last.type !== 'ADJUST_STOCK') return { reply: `I can't safely undo ${last.label || 'that action'} because it may have changed related records.`, pendingAction: null };
+    const access = await this.canAccess(user, business, PERMISSIONS.PRODUCTS_EDIT);
+    if (!access.allowed) return { reply: access.reason === 'module' ? "That feature isn't part of your business plan." : "You don't have permission to undo that stock adjustment.", pendingAction: null };
+    const product = await ProductsService.getById(last.payload.productId);
+    if (product.stock - last.payload.delta < 0) {
+      return { reply: "I can't safely undo that adjustment because subsequent stock changes mean it would take stock below zero.", pendingAction: null };
+    }
+    const result = await this.execAdjustStock({ productId: last.payload.productId, delta: -last.payload.delta }, user);
+    return { ...result, reply: `Undone — ${result.reply.replace(/^Done — /, '')}`, pendingAction: { mode: 'context', session: {} } };
   }
 
   async execAdjustStock({ productId, delta }, user) {

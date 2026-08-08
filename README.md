@@ -1,6 +1,8 @@
 # POS & Inventory System
 A full-stack, multi-tenant SaaS Point of Sale & Inventory Management System.
 
+This is a **general-purpose POS and inventory system** designed for many types of retail, wholesale, and service businesses. It is not limited to a single industry: businesses can configure their own products, units of measure, variations, customers, suppliers, warehouses, pricing, and staff workflows.
+
 Backend: Express 5 + Prisma 5 + PostgreSQL, JWT auth, granular role/permission system, multi-business (multi-tenant) data isolation.
 
 Frontend: React 19 + Vite + Tailwind CSS, React Router, Recharts.
@@ -25,6 +27,7 @@ pos-inventory-system/
 - [Platform (Super Admin) workflow](#platform-super-admin-workflow)
 - [Roles & permissions](#roles--permissions)
 - [Module gating (per-business feature flags)](#module-gating-per-business-feature-flags)
+- [Chatbot guide and Q&A](#chatbot-guide-and-qa)
 - [Useful backend scripts](#useful-backend-scripts)
 - [Project structure](#project-structure)
 - [Notes & known simplifications](#notes--known-simplifications)
@@ -89,6 +92,91 @@ Floating widget on every page, backed by a single endpoint (`POST /api/chatbot/m
 - Today's / this month's sales, dashboard summary
 - "How do I…" guidance for common tasks (add a product, record a purchase, checkout, add a customer)
 - **Actions** — can adjust stock, record a purchase, or add a customer, but always proposes the exact action first and only executes after an explicit "yes". Gated by the `CHATBOT_ACTIONS` permission plus the normal permission for that action (e.g. `PURCHASES_CREATE`).
+
+## Chatbot guide and Q&A
+
+The Store Assistant is a deterministic, rule-based chatbot available from the **Assistant** button in the top navigation. It uses regular-expression intent matching and fuzzy matching for entity names; it does not use an LLM, machine learning model, external AI service, or external NLP library.
+
+The frontend sends each message to `POST /api/chatbot/message`. The backend reads live tenant-scoped data through the established service layer, so chatbot answers reflect the currently logged-in business only.
+
+### Security and availability rules
+
+- A user must be logged in to use the chatbot.
+- Read-only answers are checked against the relevant permission and the business's enabled modules before data is queried. A disabled module returns a plan message; a missing permission returns an access-denied message.
+- Write actions require both `CHATBOT_ACTIONS` and the normal action permission. For example, recording a purchase also requires `PURCHASES_CREATE`.
+- Every write action is proposed first. The chatbot makes no change unless the next message is an explicit affirmative such as `yes`, `confirm`, or `go ahead`.
+- `no`, `cancel`, `stop`, or similar replies cancel a pending action without changing data.
+- The primary admin bypasses ordinary role permissions, but still receives live module availability from the business configuration.
+
+### Supported questions
+
+Replace placeholders such as `Product Name`, `Customer Name`, `Employee Name`, `Warehouse Name`, and `Kit Name` with actual data in your business.
+
+| Area | Example questions | Required permission | Required module |
+|---|---|---|---|
+| Products and inventory | `what is low on stock`, `how much Product Name do we have`, `price of Product Name`, `tell me about Product Name` | `INVENTORY_VIEW` / product access | `INVENTORY` / `PRODUCTS` |
+| Sales and dashboard | `today's sales`, `this month's sales`, `dashboard summary` | `SALES_VIEW` / `DASHBOARD_VIEW` | `SALES` / core dashboard |
+| Contacts | `find customer Customer Name`, `who supplies Product Name` | `CUSTOMERS_MANAGE` / `SUPPLIERS_MANAGE` | `CONTACTS` |
+| Variations | `what variations do we have`, `values for Color` | `VARIATIONS_MANAGE` | `PRODUCTS` |
+| Kits and bundles | `what's in kit Kit Name`, `can we build 5 Kit Name` | `KITS_MANAGE` | `KITS` |
+| Warehouses and transfers | `stock of Product Name in Warehouse Name`, `stock across warehouses`, `pending transfers` | `WAREHOUSES_MANAGE` / `TRANSFERS_VIEW` | `INVENTORY` |
+| Payroll | `this month's payroll total`, `Employee Name's salary` | `PAYROLL_MANAGE` | `PAYROLL` |
+| Staff expenses | `expense budget status`, `who's over budget this month`, `Employee Name's expenses this month` | `EXPENSES_MANAGE` | `EXPENSES` |
+| Customer credit | `who owes us money`, `total outstanding credit`, `outstanding credit for Customer Name` | `CREDIT_MANAGE` | `CREDIT` |
+| Installment plans | `overdue installments`, `installment plans for Customer Name`, `how many active installment plans` | `INSTALLMENTS_MANAGE` | `INSTALLMENTS` |
+| Attention digest | `what needs my attention`, `morning briefing`, `daily summary` | Per included section | Per included section |
+
+The attention digest includes only sections the user is allowed to view: low stock, overdue installments, overdue customer-credit balances, expense-budget overruns, and pending purchase orders. If there is nothing to report, it returns a positive all-clear response.
+
+### Context memory
+
+The chatbot keeps small session context in the existing `pendingAction` round trip. After resolving a product, short deterministic follow-ups can reuse it:
+
+```text
+price of Product Name
+what's its stock?
+and its price?
+```
+
+Only the most recently resolved product is used for these pronouns, so the behavior stays predictable and does not infer unrelated information.
+
+### Chatbot actions and undo
+
+Supported actions are:
+
+```text
+add 5 units of Product Name to stock
+set stock of Product Name to 20
+record a purchase of 5 Product Name from Supplier Name at 100
+add customer named Customer Name with phone 03001234567
+```
+
+The chatbot displays a confirmation prompt. Reply `yes` to execute or `no` to cancel. After a chatbot stock adjustment, use:
+
+```text
+undo my last action
+```
+
+Undo applies the inverse stock adjustment only when it remains safe (for example, it will not make stock negative). Purchases, customer creation, and set-stock actions are intentionally not undone because they may affect multiple related records or overwrite subsequent changes; the chatbot explains this rather than applying a partial reversal.
+
+### Manual test checklist
+
+1. Start the backend with `npm run dev` from `backend/` and the frontend with `npm run dev` from `frontend/`.
+2. Log in as the primary admin, or create a limited test user in **Users & Roles**.
+3. Create representative data: products, a low-stock product, customer, supplier, variation, kit, second warehouse, payroll employee, expense budget, credit sale, and installment plan as needed.
+4. Open **Assistant** and run questions from the table above.
+5. Confirm that a write action does not run before `yes`, then use `undo my last action` after a stock adjustment.
+6. Remove a permission from the limited test user and repeat a matching question; it must return an access-denied response rather than data.
+7. Disable a module for the business through the Platform dashboard and repeat a matching question; it must report that the feature is not included in the business plan.
+
+For a direct API check after login, copy `pos_token` from browser local storage and call:
+
+```powershell
+$token = 'PASTE_TENANT_JWT_HERE'
+Invoke-RestMethod -Method Post -Uri 'http://localhost:5000/api/chatbot/message' `
+  -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' `
+  -Body '{"message":"what needs my attention","pendingAction":null}'
+```
 
 ### Multi-currency display
 Amounts are stored and entered in PKR; a currency switcher in the navbar (PKR/USD/EUR/GBP/AED/SAR) converts for display only, using fixed rate snapshots (`frontend/src/utils/currency.js`).
@@ -166,6 +254,7 @@ npx prisma migrate dev
 From here you have two ways to get your first login, depending on whether you want demo data or a clean production-style start.
 
 ### Option A — Quick start with demo data (seed.js)
+> **Important:** The current `seed.js` is a clean bootstrap, not a populated demo catalog. It creates the business, its primary-admin login, and starter units of measure only. Create products, customers, suppliers, and other records through the app before testing their chatbot questions.
 Fastest way to get a fully populated business to explore the UI (categories, variations, products, customers, suppliers — see `backend/prisma/seed.js`).
 
 1. Open `backend/prisma/seed.js` and replace every `CHANGEME` placeholder — the demo Business (name/slug/industry/contact email) and the `PRIMARY_ADMIN` block (name/email/password) — with real values.
