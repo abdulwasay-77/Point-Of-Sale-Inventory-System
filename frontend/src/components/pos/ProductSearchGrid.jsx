@@ -70,7 +70,7 @@ const VIEW_MODES = [
  * The tile grid scrolls internally (independent from the cart panel next
  * to it) with the scrollbar hidden, same treatment as the sidebar nav.
  */
-export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
+export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }) {
   const [tab, setTab] = useState('products')
   const [viewMode, setViewMode] = useState(() => {
     const stored = localStorage.getItem(VIEW_MODE_KEY)
@@ -449,6 +449,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit }) {
         onClose={() => setPickerProduct(null)}
         product={pickerProduct}
         initialQuantity={pickerInitialQty}
+        customerId={customerId}
         onSelect={({ variant, batch }, quantity) => {
           onAddProduct(pickerProduct, {
             quantity,

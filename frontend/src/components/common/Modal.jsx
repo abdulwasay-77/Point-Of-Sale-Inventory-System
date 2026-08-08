@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { onApiError } from '../../utils/errorBus'
 
 /**
@@ -18,6 +19,20 @@ import { onApiError } from '../../utils/errorBus'
  * pulse on its panel — purely so it's visually obvious *which* open
  * form the error belongs to, without repeating the message twice or
  * needing every individual page to wire this up itself.
+ *
+ * Rendered via a React portal into document.body rather than in-place
+ * in the component tree. `position: fixed` only positions relative to
+ * the *viewport* if every ancestor has a plain (non-transformed)
+ * containing block — but several premium-UI ancestors (e.g. POS's
+ * `.card-premium`, which applies `transform: translateY(-4px)` on
+ * hover) create a new containing block the instant they're hovered.
+ * Without the portal, opening this Modal from inside one of those while
+ * the cursor is still sitting over it (the normal case right after a
+ * click) silently confines the "fixed" backdrop to that ancestor's box
+ * instead of the real viewport — cramped, offset, wrong. The portal
+ * sidesteps this entirely by mounting outside any such ancestor, so this
+ * Modal always covers the full screen regardless of where it's opened
+ * from.
  */
 export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
   const [isPulsing, setIsPulsing] = useState(false)
@@ -56,7 +71,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
     lg: 'max-w-2xl',
   }[size]
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-ink/50 backdrop-blur-sm p-4"
       role="dialog"
@@ -84,6 +99,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
         </div>
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

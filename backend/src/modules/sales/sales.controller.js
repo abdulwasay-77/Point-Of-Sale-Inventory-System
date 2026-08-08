@@ -14,6 +14,15 @@ class SalesController {
     success(res, invoice);
   });
 
+  getCustomerLastBatch = asyncHandler(async (req, res) => {
+    const { customerId, productId, variantId } = req.query;
+    if (!customerId || !productId) {
+      return res.status(400).json({ success: false, message: 'customerId and productId are required' });
+    }
+    const result = await SalesService.getCustomerLastBatch(customerId, productId, variantId || null);
+    success(res, result);
+  });
+
   checkout = asyncHandler(async (req, res) => {
     const { customerId, items, warehouseId, paymentMethod, amountPaid, dueDate, installmentPlan } = req.body;
     if (!Array.isArray(items) || items.length === 0) {

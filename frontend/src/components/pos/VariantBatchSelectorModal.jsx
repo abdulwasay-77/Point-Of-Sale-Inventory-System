@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import Modal from '../common/Modal'
 import Loading from '../common/Loading'
 import EmptyState from '../common/EmptyState'
-import { formatCurrency } from '../../utils/formatters'
+import { formatCurrency, formatDate } from '../../utils/formatters'
 import { productService } from '../../services/productService'
+import { salesService } from '../../services/salesService'
 
 /**
  * Handles product selection for anything that isn't a plain "just add it"
@@ -22,8 +23,18 @@ import { productService } from '../../services/productService'
  * `initialQuantity` lets a caller pre-fill the quantity — used when the
  * Area-to-Box calculator has already computed a box count and needs to
  * hand off here to finish the line (see ProductSearchGrid).
+ *
+ * `customerId` — when a real customer is selected at checkout (not the
+ * default walk-in customer), and this product is batch-tracked, this
+ * looks up which batch that customer bought last time and pre-selects it
+ * instead of leaving the picker blank. This matters for product
+ * categories where matching the exact lot matters to the customer (e.g.
+ * paint, tile, fabric dye lots) — see
+ * sales.service.js#getCustomerLastBatch. If their usual batch is no
+ * longer in stock, the next-oldest in-stock batch is auto-suggested
+ * instead, with a note explaining the substitution — never silently.
  */
-export default function VariantBatchSelectorModal({ isOpen, onClose, product, initialQuantity = 1, onSelect }) {
+export default function VariantBatchSelectorModal({ isOpen, onClose, product, initialQuantity = 1, customerId, onSelect }) {
   const needsVariant = Boolean(product?.isVariantTracked)
   const needsBatch = Boolean(product?.isBatchTracked)
   // A product can use several Variations at once now (e.g. both Color and
@@ -38,6 +49,35 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
   const [quantity, setQuantity] = useState(1)
   const [selectedVariantId, setSelectedVariantId] = useState(null)
   const [selectedBatchId, setSelectedBatchId] = useState(null)
+  const [customerBatchNote, setCustomerBatchNote] = useState(null)
+
+  // Best-effort only — never blocks the picker, never shown as an error
+  // if it fails. `batches` is already ordered oldest-received-first (see
+  // products.service.js#getBatches), so batches[0] is the correct
+  // FIFO fallback when the customer's usual batch is unavailable.
+  function applyCustomerBatchPreference(loadedBatches, variantIdUsed) {
+    setCustomerBatchNote(null)
+    if (!customerId || loadedBatches.length === 0) return Promise.resolve()
+    return salesService
+      .getCustomerLastBatch({ customerId, productId: product.id, variantId: variantIdUsed || undefined })
+      .then((res) => {
+        const info = res.data.data
+        if (!info) return
+        const usualBatch = loadedBatches.find((b) => b.id === info.batchId)
+        if (info.stillInStock && usualBatch) {
+          setSelectedBatchId(usualBatch.id)
+          setQuantity((q) => Math.max(1, Math.min(q, usualBatch.stock)))
+          setCustomerBatchNote(`This customer's usual batch — ${info.batchNumber} (last bought ${formatDate(info.purchasedAt)}).`)
+        } else {
+          const fallback = loadedBatches[0]
+          if (!fallback) return
+          setSelectedBatchId(fallback.id)
+          setQuantity((q) => Math.max(1, Math.min(q, fallback.stock)))
+          setCustomerBatchNote(`Their usual batch (${info.batchNumber}) is out of stock — selected ${fallback.batchNumber} instead.`)
+        }
+      })
+      .catch(() => {})
+  }
 
   // Reset and load whichever first step this product needs.
   useEffect(() => {
@@ -46,6 +86,7 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
     setSelectedBatchId(null)
     setQuantity(initialQuantity)
     setBatches([])
+    setCustomerBatchNote(null)
 
     if (needsVariant) {
       setIsLoadingVariants(true)
@@ -59,7 +100,11 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
       setIsLoadingBatches(true)
       productService
         .getBatches(product.id)
-        .then((res) => setBatches(res.data.data))
+        .then((res) => {
+          const loaded = res.data.data
+          setBatches(loaded)
+          return applyCustomerBatchPreference(loaded, null)
+        })
         .finally(() => setIsLoadingBatches(false))
     }
   }, [isOpen, product, initialQuantity, needsVariant, needsBatch])
@@ -70,9 +115,14 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
     if (!isOpen || !product || !needsVariant || !needsBatch || !selectedVariantId) return
     setIsLoadingBatches(true)
     setSelectedBatchId(null)
+    setCustomerBatchNote(null)
     productService
       .getBatches(product.id, selectedVariantId)
-      .then((res) => setBatches(res.data.data))
+      .then((res) => {
+        const loaded = res.data.data
+        setBatches(loaded)
+        return applyCustomerBatchPreference(loaded, selectedVariantId)
+      })
       .finally(() => setIsLoadingBatches(false))
   }, [isOpen, product, needsVariant, needsBatch, selectedVariantId])
 
@@ -87,7 +137,11 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
 
   function handleConfirm() {
     if (!isReady) return
-    onSelect({ variant: selectedVariant || null, batch: selectedBatch || null }, quantity)
+    // Same floor/ceiling as the blur handler above — belt-and-suspenders
+    // in case "Add to Cart" is clicked while the field is transiently
+    // empty (e.g. a fast click right after Backspace, before blur fires).
+    const finalQuantity = Math.max(1, Math.min(Number(quantity) || 1, maxStock))
+    onSelect({ variant: selectedVariant || null, batch: selectedBatch || null }, finalQuantity)
   }
 
   const title = needsVariant && needsBatch
@@ -168,6 +222,11 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
                 ? `Pick the batch/shade within this ${(variationLabel).toLowerCase()}.`
                 : 'This product is batch-tracked — pick the shade/lot.'}
             </p>
+            {customerBatchNote && (
+              <p className="text-xs text-teal-dark dark:text-dark-teal bg-teal-light dark:bg-dark-teal/15 rounded-lg px-2.5 py-1.5 mb-2">
+                {customerBatchNote}
+              </p>
+            )}
             {isLoadingBatches ? (
               <Loading message="Loading batches…" />
             ) : batches.length === 0 ? (
@@ -221,9 +280,33 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
               max={maxStock}
               className="input-field figure"
               value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, Math.min(Number(e.target.value), maxStock)))}
+              onChange={(e) => {
+                const raw = e.target.value
+                if (raw === '') {
+                  // Let the field actually go empty while retyping —
+                  // clamping straight back to 1 on every keystroke (the
+                  // old behavior) meant Backspace never visibly cleared
+                  // anything, so a fresh "2" landed as "12" instead of
+                  // replacing the "1". The floor/ceiling is enforced on
+                  // blur and again at submit time (handleConfirm)
+                  // instead, so an empty/out-of-range value can't
+                  // actually be added to the cart.
+                  setQuantity('')
+                  return
+                }
+                const num = Number(raw)
+                if (Number.isNaN(num)) return
+                setQuantity(Math.min(num, maxStock))
+              }}
+              onBlur={() => {
+                setQuantity((q) => {
+                  const num = Number(q)
+                  if (q === '' || Number.isNaN(num) || num < 1) return 1
+                  return Math.min(num, maxStock)
+                })
+              }}
             />
-            {quantity < initialQuantity && (
+            {quantity !== '' && quantity < initialQuantity && (
               <p className="text-xs text-amber-dark dark:text-amber mt-1">
                 Adjusted down from {initialQuantity} — only {maxStock} in stock for this selection.
               </p>

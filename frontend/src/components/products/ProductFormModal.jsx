@@ -105,6 +105,11 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
   // Medium"). Irrelevant once editing an existing product (that uses
   // VariantManager, which talks to the API directly instead).
   const [picks, setPicks] = useState([])
+  // Bumped by VariantManager (the Color/Size Combinations panel)
+  // whenever its variant list changes, so the sibling BatchManager panel
+  // below it knows to refetch its own "Select a value…" dropdown instead
+  // of holding a stale list from whenever it last mounted.
+  const [variantsRefreshToken, setVariantsRefreshToken] = useState(0)
 
   useEffect(() => {
     if (isOpen) {
@@ -834,7 +839,11 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
               {isSavedVariantProduct ? (
                 // Already has these Variations attached in the database —
                 // safe to manage combinations live via the API right away.
-                <VariantManager productId={initialValues.id} variationIds={initialValues.variationIds} />
+                <VariantManager
+                  productId={initialValues.id}
+                  variationIds={initialValues.variationIds}
+                  onVariantsChanged={() => setVariantsRefreshToken((t) => t + 1)}
+                />
               ) : initialValues?.id ? (
                 // Existing product, but Variations were only picked here
                 // this session — not saved yet. Combinations can't be
@@ -867,6 +876,7 @@ export default function ProductFormModal({ isOpen, onClose, onSave, initialValue
                   productId={initialValues.id}
                   isVariantTracked={isSavedVariantProduct}
                   warehouses={warehouses}
+                  variantsRefreshToken={variantsRefreshToken}
                 />
               ) : (
                 // Batch tracking was just turned on this session (or this

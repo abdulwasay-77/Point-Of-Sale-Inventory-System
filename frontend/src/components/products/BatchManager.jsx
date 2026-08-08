@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Icon from '../common/Icon'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 import { productService } from '../../services/productService'
@@ -25,7 +25,7 @@ const emptyDraft = { variantId: '', batchNumber: '', quantity: '', costPrice: ''
  * product has nothing yet to attach a batch to (see the "save first"
  * message shown instead, in ProductFormModal).
  */
-export default function BatchManager({ productId, isVariantTracked, warehouses }) {
+export default function BatchManager({ productId, isVariantTracked, warehouses, variantsRefreshToken }) {
   const [batches, setBatches] = useState([])
   const [variants, setVariants] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -50,6 +50,22 @@ export default function BatchManager({ productId, isVariantTracked, warehouses }
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId, isVariantTracked])
+
+  // VariantManager (the "Color Combinations" panel above this one) owns
+  // the actual list of variants — this panel just needs to know when
+  // that list changes (a value added/edited/removed) so its own "Select
+  // a value…" dropdown doesn't go stale, since the two are siblings with
+  // no other link between them. See ProductFormModal, which bumps this
+  // token via VariantManager's onVariantsChanged callback.
+  const isFirstRefreshToken = useRef(true)
+  useEffect(() => {
+    if (isFirstRefreshToken.current) {
+      isFirstRefreshToken.current = false
+      return
+    }
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantsRefreshToken])
 
   function variantName(variantId) {
     if (!variantId) return null

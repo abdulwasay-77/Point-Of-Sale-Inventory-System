@@ -143,7 +143,7 @@ export default function PosPage() {
           panel (e.g. long product names) re-introduces the same problem. */}
       <div className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_380px] gap-4 lg:overflow-hidden">
         <div className="lg:h-full lg:min-h-0 lg:min-w-0">
-          <ProductSearchGrid onAddProduct={addProductItem} onAddKit={addKitItem} />
+          <ProductSearchGrid onAddProduct={addProductItem} onAddKit={addKitItem} customerId={customer?.id} />
         </div>
         <div className="lg:h-full lg:min-h-0 lg:min-w-0">
           <CartPanel

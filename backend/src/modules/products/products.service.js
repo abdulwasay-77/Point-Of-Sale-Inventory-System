@@ -1,4 +1,3 @@
-
 const prisma = require('../../config/db');
 const { getDefaultWarehouseId } = require('../../utils/defaultWarehouse');
 const { PERMISSIONS } = require('../../config/permissions');
@@ -1007,15 +1006,37 @@ class ProductsService {
     return this.variantToDTO(updated, product);
   }
 
-  /** Soft-deletes (deactivates) a variant if it has sales history, same
-   *  pattern as remove() for a whole product — otherwise hard-deletes. */
+  /** Soft-deletes (deactivates) a variant if it has real transaction
+   *  history — sold (invoice), moved between warehouses (transfer), or
+   *  received via a real Purchase order (a purchase-linked stock
+   *  movement) — otherwise hard-deletes. Mirrors remove() at the product
+   *  level, just scoped to this one variant instead of the whole
+   *  product. */
   async removeVariant(variantId) {
-    const usageCount = await prisma.invoiceItem.count({ where: { variant_id: variantId } });
-    if (usageCount > 0) {
+    const [invoiceUsage, transferUsage, purchaseUsage] = await Promise.all([
+      prisma.invoiceItem.count({ where: { variant_id: variantId } }),
+      prisma.stockTransfer.count({ where: { variant_id: variantId } }),
+      prisma.stockMovement.count({ where: { variant_id: variantId, purchase_order_id: { not: null } } }),
+    ]);
+    if (invoiceUsage > 0 || transferUsage > 0 || purchaseUsage > 0) {
       await prisma.productVariant.update({ where: { id: variantId }, data: { is_active: false } });
       return;
     }
+
+    // No real transaction history — safe to hard-delete. But every
+    // dependent stock record (levels, movements, cost lots, batches) has
+    // a RESTRICT foreign key back to this variant, so Postgres blocks
+    // the delete until those are cleared first — there's no real history
+    // for any of them to lose here (this variant's stock/cost lots only
+    // ever came from opening-stock/opening-batch entries or manual
+    // adjustments — a real sale, transfer, or purchase would have been
+    // caught above). All inside one transaction so a partial cleanup
+    // can't happen.
     await prisma.$transaction(async (tx) => {
+      await tx.stockMovement.deleteMany({ where: { variant_id: variantId } });
+      await tx.costLot.deleteMany({ where: { variant_id: variantId } });
+      await tx.stockLevel.deleteMany({ where: { variant_id: variantId } });
+      await tx.batch.deleteMany({ where: { variant_id: variantId } });
       await tx.productVariantValue.deleteMany({ where: { variant_id: variantId } });
       await tx.productVariant.delete({ where: { id: variantId } });
     });
@@ -1167,4 +1188,3 @@ class ProductsService {
 }
 
 module.exports = new ProductsService();
-

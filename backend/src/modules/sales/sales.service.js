@@ -87,6 +87,48 @@ class SalesService {
     return invoices.map(this.toDTO);
   }
 
+  /**
+   * Looks up the most recent batch a specific customer bought this exact
+   * product (and variant, if applicable) — used at POS checkout to
+   * pre-select the batch they got last time instead of leaving it to
+   * memory/manual lookup, since for some product categories (e.g. paint,
+   * tile, fabric) buying from the same lot again genuinely matters for a
+   * consistent match. Deliberately customer-scoped: this has nothing to
+   * do with FIFO/costing (see consumeCostLotsFifo above) — it's purely a
+   * "what did *this* person get before" lookup, using the same batch_id
+   * every invoice line already records.
+   *
+   * Returns null if this customer has never bought this product/variant
+   * with a recorded batch before (e.g. their only purchase predates batch
+   * tracking, or this is their first time).
+   */
+  async getCustomerLastBatch(customerId, productId, variantId = null) {
+    const lastItem = await prisma.invoiceItem.findFirst({
+      where: {
+        product_id: productId,
+        variant_id: variantId || null,
+        batch_id: { not: null },
+        invoice: { customer_id: customerId },
+      },
+      include: { invoice: { select: { created_at: true } }, batch: { select: { batch_number: true } } },
+      orderBy: { invoice: { created_at: 'desc' } },
+    });
+    if (!lastItem) return null;
+
+    const stockAgg = await prisma.stockLevel.aggregate({
+      where: { batch_id: lastItem.batch_id },
+      _sum: { quantity: true },
+    });
+    const stillInStock = Number(stockAgg._sum.quantity || 0) > 0;
+
+    return {
+      batchId: lastItem.batch_id,
+      batchNumber: lastItem.batch.batch_number,
+      purchasedAt: lastItem.invoice.created_at,
+      stillInStock,
+    };
+  }
+
   async getById(id) {
     const invoice = await prisma.invoice.findUnique({
       where: { id },

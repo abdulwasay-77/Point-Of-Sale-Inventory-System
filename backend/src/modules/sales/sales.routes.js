@@ -16,6 +16,13 @@ router.post('/checkout', permissionMiddleware(PERMISSIONS.SALES_CHECKOUT), Sales
 // SALES_VIEW) since this is really "undo the checkout I just did", not a
 // sales-history/reporting action.
 router.post('/:id/abandon', permissionMiddleware(PERMISSIONS.SALES_CHECKOUT), SalesController.abandon);
+// Same reasoning again: a fixed-path GET registered before the generic
+// GET /:id below, so '/customer-last-batch' is never misread as
+// getById('customer-last-batch'). Gated by SALES_CHECKOUT (not
+// SALES_VIEW) since this is part of the active checkout flow — the same
+// permission that already covers seeing/acting on the cart before a sale
+// is finalized — not sales history/reporting.
+router.get('/customer-last-batch', permissionMiddleware(PERMISSIONS.SALES_CHECKOUT), SalesController.getCustomerLastBatch);
 router.get('/', permissionMiddleware(PERMISSIONS.SALES_VIEW), SalesController.getAll);
 router.get('/:id', permissionMiddleware(PERMISSIONS.SALES_VIEW), SalesController.getById);
 

@@ -246,21 +246,25 @@ function ByLocationTab({ items, warehouses }) {
               key={w.id}
               type="button"
               onClick={() => setActiveWarehouse(w)}
-              className="card card-premium text-left p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-8px_rgba(31,36,48,0.25)] dark:hover:shadow-[0_10px_24px_-8px_rgba(0,0,0,0.5)]"
+              className="group card card-premium shine-sweep glow-amber text-left p-4"
             >
               <div className="flex items-center gap-3 mb-3">
                 <span className="section-icon rounded-lg bg-paper-dim dark:bg-dark-card2 border border-line dark:border-dark-border text-ink-muted dark:text-dark-muted">
-                  <Icon name="inventory" className="h-4 w-4" />
+                  <Icon name="inventory" className="h-4 w-4 transition-transform duration-300 group-hover:scale-110" />
                 </span>
                 <span className="font-medium text-ink dark:text-dark-text">{w.name}</span>
               </div>
               <div className="flex items-baseline gap-4">
                 <div>
-                  <p className="text-2xl font-semibold text-ink dark:text-dark-text figure">{totalUnits}</p>
+                  <p className="text-2xl font-semibold text-ink dark:text-dark-text figure transition-transform duration-300 group-hover:translate-x-0.5">
+                    {totalUnits}
+                  </p>
                   <p className="text-xs text-ink-muted dark:text-dark-muted">Total units</p>
                 </div>
                 <div>
-                  <p className="text-2xl font-semibold text-ink dark:text-dark-text figure">{productCount}</p>
+                  <p className="text-2xl font-semibold text-ink dark:text-dark-text figure transition-transform duration-300 group-hover:translate-x-0.5">
+                    {productCount}
+                  </p>
                   <p className="text-xs text-ink-muted dark:text-dark-muted">Products stocked</p>
                 </div>
               </div>

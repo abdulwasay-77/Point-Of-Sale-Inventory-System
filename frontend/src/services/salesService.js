@@ -17,4 +17,11 @@ export const salesService = {
   // with an error modal since they're already back at an empty-looking
   // cart action, not mid-task.
   abandon: (id) => axiosInstance.post(`/sales/${id}/abandon`, {}, { skipGlobalError: true }),
+  // Looks up which batch a specific customer bought last for this
+  // product(+variant) — used to pre-select their usual batch in
+  // VariantBatchSelectorModal. skipGlobalError: purely an enhancement to
+  // the batch picker, never something that should interrupt the cashier
+  // with an error popup if it fails — the picker just falls back to no
+  // pre-selection.
+  getCustomerLastBatch: (params) => axiosInstance.get('/sales/customer-last-batch', { params, skipGlobalError: true }),
 }

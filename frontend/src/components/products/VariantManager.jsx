@@ -23,7 +23,7 @@ const emptyDraft = { valueIds: {}, sku: '', priceOverride: '', stock: '' }
  * record created server-side — same reasoning as why barcode generation
  * saves immediately for an existing product elsewhere in this form.
  */
-export default function VariantManager({ productId, variationIds }) {
+export default function VariantManager({ productId, variationIds, onVariantsChanged }) {
   const [variants, setVariants] = useState([])
   const [variations, setVariations] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -41,6 +41,11 @@ export default function VariantManager({ productId, variationIds }) {
       .then(([variantsRes, variationResults]) => {
         setVariants(variantsRes.data.data)
         setVariations(variationResults)
+        // Tell sibling panels (e.g. BatchManager, which scopes batches
+        // per variant) that the set of variants may have changed, so
+        // they can refetch their own copy instead of holding a stale
+        // list from whenever they last mounted.
+        onVariantsChanged?.()
       })
       .finally(() => setIsLoading(false))
   }
