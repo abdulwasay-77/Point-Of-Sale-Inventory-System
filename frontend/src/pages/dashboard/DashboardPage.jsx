@@ -101,10 +101,14 @@ export default function DashboardPage() {
         <RecentSalesCard sales={recentSales} />
       </div>
 
-      {/* Row 5 — low stock list + quick actions (unchanged) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 mt-5 sm:mt-6">
-        {canViewInventory && (
-          <div className="card card-premium shine-sweep glow-rose p-4 sm:p-5 lg:col-span-2">
+      {/* Row 5 — low stock list, full width, same size/shape as the recent
+          sales card above (Quick Actions card removed entirely — it only
+          ever offered 3 static shortcuts and duplicated nav already in
+          the sidebar, and hiding/showing individual buttons per-permission
+          would have added real complexity for little payoff). */}
+      {canViewInventory && (
+        <div className="mt-5 sm:mt-6">
+          <div className="card card-premium shine-sweep glow-rose p-4 sm:p-5 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <span className="h-7 w-7 rounded-lg bg-rose-light dark:bg-dark-rose/15 text-rose dark:text-dark-rose flex items-center justify-center">
@@ -121,40 +125,8 @@ export default function DashboardPage() {
             </div>
             <LowStockList products={lowStockProducts} />
           </div>
-        )}
-
-        <div className={`card card-premium shine-sweep glow-amber p-4 sm:p-5 ${canViewInventory ? '' : 'lg:col-span-3'}`}>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="h-7 w-7 rounded-lg bg-amber-light dark:bg-amber/15 text-amber-dark dark:text-amber flex items-center justify-center">
-              <Icon name="chart" className="h-4 w-4" />
-            </span>
-            <h2 className="font-display text-base font-semibold text-ink dark:text-dark-text">Quick actions</h2>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Link
-              to="/pos"
-              className="btn-accent justify-start relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_-6px_rgba(232,163,61,0.55)]"
-            >
-              <Icon name="pos" className="h-4 w-4" />
-              Start a new sale
-            </Link>
-            <Link
-              to="/products"
-              className="btn-outline justify-start transition-all duration-200 hover:-translate-y-0.5 hover:border-ink dark:hover:border-dark-border hover:shadow-[0_8px_20px_-8px_rgba(31,36,48,0.35)] dark:hover:shadow-[0_8px_20px_-8px_rgba(0,0,0,0.6)]"
-            >
-              <Icon name="products" className="h-4 w-4" />
-              Add a product
-            </Link>
-            <Link
-              to="/purchases"
-              className="btn-outline justify-start transition-all duration-200 hover:-translate-y-0.5 hover:border-teal dark:hover:border-dark-teal hover:text-teal-dark dark:hover:text-dark-teal hover:shadow-[0_8px_20px_-8px_rgba(47,111,107,0.35)]"
-            >
-              <Icon name="purchases" className="h-4 w-4" />
-              Record a purchase
-            </Link>
-          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

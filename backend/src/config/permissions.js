@@ -10,6 +10,8 @@
 // A brand-new role starts with none of these; an admin grants exactly
 // what it needs from this list.
 
+const { MODULES } = require('./modules');
+
 // Every permission the app checks for, grouped by module. Keep keys
 // stable — they're stored as plain strings in both user_permissions.
 // permission and role_permissions.permission.
@@ -18,7 +20,7 @@ const PERMISSIONS = {
   PRODUCTS_VIEW: 'PRODUCTS_VIEW',
   PRODUCTS_EDIT: 'PRODUCTS_EDIT', // create + update
   PRODUCTS_DELETE: 'PRODUCTS_DELETE',
-  // Pricing fields specifically (tax rate, discount, target margin, cost
+  // Pricing fields specifically (GST rate, discount, target margin, cost
   // price) — deliberately separate from PRODUCTS_EDIT so a role like
   // Warehouse Staff can still edit ordinary product details without being
   // able to touch tax/pricing. Admin-only by default.
@@ -30,10 +32,6 @@ const PERMISSIONS = {
   // Variations (e.g. Color, Diameter) — reusable, defined once and
   // reused across products, managed on their own page.
   VARIATIONS_MANAGE: 'VARIATIONS_MANAGE',
-  // Units of measure (e.g. Piece, Box, Kg) — was a fixed enum, now a
-  // business-managed list, same "define once, reuse everywhere" shape
-  // as Variations above.
-  UNITS_MANAGE: 'UNITS_MANAGE',
   // Customers
   CUSTOMERS_MANAGE: 'CUSTOMERS_MANAGE',
   // Suppliers
@@ -86,36 +84,94 @@ const PERMISSIONS = {
 // Human-readable labels + grouping, used by the frontend to render the
 // permissions grid (both the per-user Permissions modal and the new
 // Manage Roles screen) without hardcoding copy in two places.
+//
+// Each entry also carries `module`: the business-plan module (see
+// config/modules.js — same key authMiddleware.js checks via
+// ROUTE_MODULE_MAP) that permission actually requires. A permission
+// with `module: null` is core functionality with no route-level module
+// gate (dashboard, settings, chatbot) and is always offered regardless
+// of plan. Kept as an explicit per-permission field, rather than
+// inferring it from the `group` label above, because `group` is a UI
+// grouping only and deliberately doesn't line up 1:1 with modules
+// (e.g. group "Sales" spans the SALES, REPORTS, CREDIT and
+// INSTALLMENTS modules) — reusing it would silently mis-tag several
+// permissions.
 const PERMISSION_CATALOG = [
-  { key: PERMISSIONS.DASHBOARD_VIEW, label: 'View dashboard', group: 'Dashboard' },
-  { key: PERMISSIONS.PRODUCTS_VIEW, label: 'View products', group: 'Products' },
-  { key: PERMISSIONS.PRODUCTS_EDIT, label: 'Create / edit products', group: 'Products' },
-  { key: PERMISSIONS.PRODUCTS_DELETE, label: 'Delete products', group: 'Products' },
-  { key: PERMISSIONS.PRICING_MANAGE, label: 'Edit tax rate, discount & pricing', group: 'Products' },
-  { key: PERMISSIONS.BARCODES_MANAGE, label: 'Generate & print barcode labels', group: 'Products' },
-  { key: PERMISSIONS.CATEGORIES_MANAGE, label: 'Manage categories', group: 'Products' },
-  { key: PERMISSIONS.VARIATIONS_MANAGE, label: 'Manage variations (e.g. Color, Diameter)', group: 'Products' },
-  { key: PERMISSIONS.UNITS_MANAGE, label: 'Manage units of measure (e.g. Piece, Box, Kg)', group: 'Products' },
-  { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', group: 'Inventory' },
-  { key: PERMISSIONS.KITS_MANAGE, label: 'Manage kits & bundles', group: 'Inventory' },
-  { key: PERMISSIONS.WAREHOUSES_MANAGE, label: 'Manage warehouses', group: 'Inventory' },
-  { key: PERMISSIONS.TRANSFERS_VIEW, label: 'View stock transfers', group: 'Inventory' },
-  { key: PERMISSIONS.TRANSFERS_CREATE, label: 'Create stock transfers', group: 'Inventory' },
-  { key: PERMISSIONS.PURCHASES_VIEW, label: 'View purchases', group: 'Inventory' },
-  { key: PERMISSIONS.PURCHASES_CREATE, label: 'Record purchases', group: 'Inventory' },
-  { key: PERMISSIONS.CUSTOMERS_MANAGE, label: 'Manage customers', group: 'Contacts' },
-  { key: PERMISSIONS.SUPPLIERS_MANAGE, label: 'Manage suppliers', group: 'Contacts' },
-  { key: PERMISSIONS.SALES_CHECKOUT, label: 'Use POS / checkout', group: 'Sales' },
-  { key: PERMISSIONS.SALES_VIEW, label: 'View sales history', group: 'Sales' },
-  { key: PERMISSIONS.REPORTS_VIEW, label: 'View reports', group: 'Sales' },
-  { key: PERMISSIONS.PAYROLL_MANAGE, label: 'Manage payroll', group: 'Admin' },
-  { key: PERMISSIONS.USERS_MANAGE, label: 'Manage users & roles', group: 'Admin' },
-  { key: PERMISSIONS.CREDIT_MANAGE, label: 'Manage customer credit & late fees', group: 'Sales' },
-  { key: PERMISSIONS.INSTALLMENTS_MANAGE, label: 'Manage installment plans', group: 'Sales' },
-  { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Manage website settings', group: 'Admin' },
-  { key: PERMISSIONS.CHATBOT_ACTIONS, label: 'Let chatbot perform actions', group: 'Admin' },
-  { key: PERMISSIONS.EXPENSES_RECORD, label: 'Record own staff expenses', group: 'Expenses' },
-  { key: PERMISSIONS.EXPENSES_MANAGE, label: 'Manage expense budget, limits & history', group: 'Expenses' },
+  { key: PERMISSIONS.DASHBOARD_VIEW, label: 'View dashboard', group: 'Dashboard', module: null },
+  { key: PERMISSIONS.PRODUCTS_VIEW, label: 'View products', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.PRODUCTS_EDIT, label: 'Create / edit products', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.PRODUCTS_DELETE, label: 'Delete products', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.PRICING_MANAGE, label: 'Edit GST, discount & pricing', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.BARCODES_MANAGE, label: 'Generate & print barcode labels', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.CATEGORIES_MANAGE, label: 'Manage categories', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.VARIATIONS_MANAGE, label: 'Manage variations (e.g. Color, Diameter)', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', group: 'Inventory', module: 'INVENTORY' },
+  { key: PERMISSIONS.KITS_MANAGE, label: 'Manage kits & bundles', group: 'Inventory', module: 'KITS' },
+  { key: PERMISSIONS.WAREHOUSES_MANAGE, label: 'Manage warehouses', group: 'Inventory', module: 'INVENTORY' },
+  { key: PERMISSIONS.TRANSFERS_VIEW, label: 'View stock transfers', group: 'Inventory', module: 'INVENTORY' },
+  { key: PERMISSIONS.TRANSFERS_CREATE, label: 'Create stock transfers', group: 'Inventory', module: 'INVENTORY' },
+  { key: PERMISSIONS.PURCHASES_VIEW, label: 'View purchases', group: 'Inventory', module: 'PURCHASES' },
+  { key: PERMISSIONS.PURCHASES_CREATE, label: 'Record purchases', group: 'Inventory', module: 'PURCHASES' },
+  { key: PERMISSIONS.CUSTOMERS_MANAGE, label: 'Manage customers', group: 'Contacts', module: 'CONTACTS' },
+  { key: PERMISSIONS.SUPPLIERS_MANAGE, label: 'Manage suppliers', group: 'Contacts', module: 'CONTACTS' },
+  { key: PERMISSIONS.SALES_CHECKOUT, label: 'Use POS / checkout', group: 'Sales', module: 'SALES' },
+  { key: PERMISSIONS.SALES_VIEW, label: 'View sales history', group: 'Sales', module: 'SALES' },
+  { key: PERMISSIONS.REPORTS_VIEW, label: 'View reports', group: 'Sales', module: 'REPORTS' },
+  { key: PERMISSIONS.PAYROLL_MANAGE, label: 'Manage payroll', group: 'Admin', module: 'PAYROLL' },
+  { key: PERMISSIONS.USERS_MANAGE, label: 'Manage users & roles', group: 'Admin', module: 'ADMIN' },
+  { key: PERMISSIONS.CREDIT_MANAGE, label: 'Manage customer credit & late fees', group: 'Sales', module: 'CREDIT' },
+  { key: PERMISSIONS.INSTALLMENTS_MANAGE, label: 'Manage installment plans', group: 'Sales', module: 'INSTALLMENTS' },
+  { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Manage website settings', group: 'Admin', module: null },
+  { key: PERMISSIONS.CHATBOT_ACTIONS, label: 'Let chatbot perform actions', group: 'Admin', module: null },
+  { key: PERMISSIONS.EXPENSES_RECORD, label: 'Record own staff expenses', group: 'Expenses', module: 'EXPENSES' },
+  { key: PERMISSIONS.EXPENSES_MANAGE, label: 'Manage expense budget, limits & history', group: 'Expenses', module: 'EXPENSES' },
 ];
 
-module.exports = { PERMISSIONS, PERMISSION_CATALOG };
+// key -> required module (or null for core/always-available), derived
+// from the catalog above so there's exactly one place this mapping is
+// maintained.
+const PERMISSION_MODULE_MAP = PERMISSION_CATALOG.reduce((acc, p) => {
+  acc[p.key] = p.module;
+  return acc;
+}, {});
+
+// Sanity check against typos: every non-null `module` referenced above
+// must be a real module key from config/modules.js. Fails fast at
+// startup rather than silently letting a mistyped module string mean a
+// permission is treated as always-available (or never-available).
+const VALID_MODULE_KEYS = new Set(Object.keys(MODULES));
+for (const p of PERMISSION_CATALOG) {
+  if (p.module && !VALID_MODULE_KEYS.has(p.module)) {
+    throw new Error(`config/permissions.js: "${p.key}" references unknown module "${p.module}"`);
+  }
+}
+
+// Is this permission actually usable for a business with this set of
+// enabled modules? True for core permissions (module: null) and for any
+// permission whose module is in `enabledModules`. Used to keep what a
+// role/user can be GRANTED in sync with what the business's plan
+// actually allows — the authMiddleware.js module gate already blocks
+// the underlying routes regardless, but without this, an admin could
+// still tick a checkbox for a feature their plan doesn't include, which
+// is confusing even though it's harmless.
+function isPermissionAllowedForModules(permissionKey, enabledModules = []) {
+  const requiredModule = PERMISSION_MODULE_MAP[permissionKey];
+  return !requiredModule || enabledModules.includes(requiredModule);
+}
+
+// Filters a full/partial permission-catalog array down to only entries
+// usable by a business with this set of enabled modules. Used to build
+// the catalog GET /users/permissions/catalog returns, so the "Add Role"
+// and per-user Permissions checkbox grids only ever show options that
+// can actually do something.
+function filterCatalogForModules(catalog, enabledModules = []) {
+  return catalog.filter((p) => isPermissionAllowedForModules(p.key, enabledModules));
+}
+
+module.exports = {
+  PERMISSIONS,
+  PERMISSION_CATALOG,
+  PERMISSION_MODULE_MAP,
+  isPermissionAllowedForModules,
+  filterCatalogForModules,
+};

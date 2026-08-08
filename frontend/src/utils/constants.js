@@ -1,4 +1,3 @@
-
 // App-wide constants.
 
 // Note: there used to be a fixed ROLES object here (ADMIN/ACCOUNTANT/
@@ -22,7 +21,7 @@ export const NAV_ITEMS = [
   { label: 'Barcode Labels', path: '/barcodes', icon: 'barcode' },
   { label: 'Categories', path: '/categories', icon: 'categories' },
   { label: 'Variations', path: '/variations', icon: 'variations' },
-  { label: 'Units', path: '/units', icon: 'variations' },
+  { label: 'Units', path: '/units', icon: 'unitOfMeasure' },
   { label: 'Customers', path: '/customers', icon: 'customers' },
   { label: 'Suppliers', path: '/suppliers', icon: 'suppliers' },
   { label: 'Purchases', path: '/purchases', icon: 'purchases' },
@@ -40,5 +39,3 @@ export const NAV_ITEMS = [
   { label: 'Profile', path: '/profile', icon: 'userCircle' },
   { label: 'Settings', path: '/settings', icon: 'settings' },
 ]
-
-

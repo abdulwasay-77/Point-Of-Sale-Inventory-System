@@ -13,12 +13,12 @@ class RolesController {
     if (!name) {
       return res.status(400).json({ success: false, message: 'Role name is required.' });
     }
-    const role = await RolesService.create({ name, permissions });
+    const role = await RolesService.create({ name, permissions }, req.business.enabled_modules);
     created(res, role, 'Role created');
   });
 
   update = asyncHandler(async (req, res) => {
-    const role = await RolesService.update(req.params.id, req.body);
+    const role = await RolesService.update(req.params.id, req.body, req.business.enabled_modules);
     success(res, role, 'Role updated');
   });
 

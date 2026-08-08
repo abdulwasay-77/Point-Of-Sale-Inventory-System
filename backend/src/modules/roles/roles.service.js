@@ -1,5 +1,5 @@
 const prisma = require('../../config/db');
-const { PERMISSIONS } = require('../../config/permissions');
+const { PERMISSIONS, isPermissionAllowedForModules } = require('../../config/permissions');
 
 const VALID_PERMISSION_KEYS = new Set(Object.values(PERMISSIONS));
 
@@ -23,10 +23,20 @@ class RolesService {
    * New roles start with ZERO permissions on purpose — an admin grants
    * exactly what the role needs from the catalog rather than inheriting
    * anything by accident. Silently drops any key in `permissions` that
-   * isn't in the fixed PERMISSIONS catalog, rather than erroring, so a
-   * stale/garbage key from the client can't end up stored.
+   * isn't in the fixed PERMISSIONS catalog, or that the business's plan
+   * doesn't include (module gate — see config/permissions.js), rather
+   * than erroring, so a stale/garbage key or a plan-mismatched key from
+   * the client can't end up stored. `enabledModules` is the calling
+   * business's current Business.enabled_modules (see
+   * roles.controller.js, sourced from req.business — already resolved
+   * by authMiddleware.js). This is defense-in-depth: the UI already
+   * only offers plan-appropriate checkboxes (see
+   * users.service.js#getPermissionCatalog), and authMiddleware.js's
+   * module gate blocks the underlying routes regardless of what a role
+   * stores — but a direct API call could otherwise still stick an
+   * out-of-plan permission key onto a role.
    */
-  async create({ name, permissions = [] }) {
+  async create({ name, permissions = [] }, enabledModules = []) {
     const trimmed = (name || '').trim();
     if (!trimmed) {
       const err = new Error('Role name is required.');
@@ -39,7 +49,9 @@ class RolesService {
       err.status = 409;
       throw err;
     }
-    const validPermissions = permissions.filter((p) => VALID_PERMISSION_KEYS.has(p));
+    const validPermissions = permissions.filter(
+      (p) => VALID_PERMISSION_KEYS.has(p) && isPermissionAllowedForModules(p, enabledModules)
+    );
 
     // Deliberately NOT a single `prisma.role.create({ data: { permissions:
     // { create: [...] } } } })` — the tenant-scoping extension (see
@@ -67,9 +79,10 @@ class RolesService {
   /**
    * Renames and/or replaces the permission set for a role. Every role
    * can be edited this way now — there's nothing "built-in" left to
-   * protect (see class comment above).
+   * protect (see class comment above). `enabledModules` — see create()
+   * above for why this filter exists.
    */
-  async update(id, { name, permissions }) {
+  async update(id, { name, permissions }, enabledModules = []) {
     const role = await prisma.role.findUnique({ where: { id } });
     if (!role) {
       const err = new Error('Role not found');
@@ -99,7 +112,9 @@ class RolesService {
         await tx.role.update({ where: { id }, data: { name: name.trim() } });
       }
       if (permissions !== undefined) {
-        const validPermissions = permissions.filter((p) => VALID_PERMISSION_KEYS.has(p));
+        const validPermissions = permissions.filter(
+          (p) => VALID_PERMISSION_KEYS.has(p) && isPermissionAllowedForModules(p, enabledModules)
+        );
         await tx.rolePermission.deleteMany({ where: { role_id: id } });
         if (validPermissions.length) {
           await tx.rolePermission.createMany({

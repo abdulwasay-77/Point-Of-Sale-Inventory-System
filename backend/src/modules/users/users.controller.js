@@ -1,4 +1,3 @@
-
 const UsersService = require('./users.service');
 const asyncHandler = require('../../utils/asyncHandler');
 const { success, created } = require('../../utils/apiResponse');
@@ -10,7 +9,7 @@ class UsersController {
   });
 
   getPermissionCatalog = asyncHandler(async (req, res) => {
-    success(res, UsersService.getPermissionCatalog());
+    success(res, UsersService.getPermissionCatalog(req.business.enabled_modules));
   });
 
   getById = asyncHandler(async (req, res) => {
@@ -49,5 +48,3 @@ class UsersController {
 }
 
 module.exports = new UsersController();
-
-

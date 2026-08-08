@@ -1,4 +1,3 @@
-
 import { NavLink, useNavigate } from 'react-router-dom'
 import Icon from '../common/Icon'
 import { NAV_ITEMS } from '../../utils/constants'
@@ -6,6 +5,39 @@ import { useAuth } from '../../hooks/useAuth'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBusinessSettings } from '../../hooks/useBusinessSettings'
 import { toAssetUrl } from '../../utils/assetUrl'
+
+// Which visual group each nav item is bucketed under. Purely presentational
+// (grouping/section labels only) — has no bearing on permissions/modules,
+// which are still resolved independently below. Anything not listed here
+// falls back to "Overview" (currently just Dashboard).
+const GROUP_BY_LABEL = {
+  Dashboard: 'Overview',
+  Products: 'Catalog',
+  'Barcode Labels': 'Catalog',
+  Categories: 'Catalog',
+  Variations: 'Catalog',
+  Units: 'Catalog',
+  'Kits & Bundles': 'Catalog',
+  Purchases: 'Operations',
+  Inventory: 'Operations',
+  Warehouses: 'Operations',
+  Suppliers: 'Operations',
+  POS: 'Sales & POS',
+  Sales: 'Sales & POS',
+  Customers: 'Sales & POS',
+  'Customer Credit': 'Sales & POS',
+  Installments: 'Sales & POS',
+  Payroll: 'Finance',
+  Expenses: 'Finance',
+  Reports: 'Finance',
+  Users: 'Administration',
+  Profile: 'Administration',
+  Settings: 'Administration',
+}
+// Fixed display order for groups — independent of NAV_ITEMS' own order,
+// so the sidebar's section order never depends on how that array is
+// arranged.
+const GROUP_ORDER = ['Overview', 'Catalog', 'Operations', 'Sales & POS', 'Finance', 'Administration']
 
 /**
  * Sidebar navigation. Persists across all authenticated pages via
@@ -19,6 +51,11 @@ import { toAssetUrl } from '../../utils/assetUrl'
  *    width toggle at `lg` and above, controlled by DashboardLayout's
  *    `collapsed` state (persisted to localStorage there).
  * They don't interact with each other.
+ *
+ * Nav items are grouped into labeled sections (Overview/Catalog/Operations/
+ * Sales & POS/Finance/Administration, see GROUP_BY_LABEL above) purely for
+ * visual scanability — grouping carries no permission logic of its own.
+ * When collapsed, section labels collapse into thin dividers instead.
  *
  * Footer also hosts a Logout button (cloned from ProfilePage's, which
  * remains the other place logout lives — see ProfilePage.jsx) so users
@@ -107,6 +144,14 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
     return true
   })
 
+  // Bucket the already-permission-filtered items into their display
+  // groups, in GROUP_ORDER order, dropping any group left empty by the
+  // filtering above (e.g. a cashier role with no Finance-tier items).
+  const groupedNav = GROUP_ORDER.map((group) => ({
+    group,
+    items: visibleItems.filter((item) => (GROUP_BY_LABEL[item.label] || 'Overview') === group),
+  })).filter((g) => g.items.length > 0)
+
   async function handleLogout() {
     await logout()
     navigate('/login')
@@ -116,11 +161,11 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
     <>
       {/* Mobile overlay */}
       {isOpen && (
-        <div className="fixed inset-0 bg-ink/40 z-30 lg:hidden" onClick={onClose} aria-hidden="true" />
+        <div className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] z-30 lg:hidden" onClick={onClose} aria-hidden="true" />
       )}
 
       <aside
-        className={`fixed lg:sticky top-0 left-0 h-screen bg-ink text-paper z-40 flex flex-col shrink-0 transition-[width,transform] duration-200 ease-in-out ${
+        className={`fixed lg:sticky top-0 left-0 h-screen bg-gradient-to-b from-ink to-[#171b24] text-paper z-40 flex flex-col shrink-0 transition-[width,transform] duration-200 ease-in-out shadow-[4px_0_24px_-8px_rgba(0,0,0,0.35)] ${
           isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         } ${collapsed ? 'w-[92px]' : 'w-64'}`}
       >
@@ -241,28 +286,75 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
           )}
         </div>
 
-        {/* Nav items — scrollable if the list ever grows, scrollbar hidden */}
-        <nav className="flex-1 overflow-y-auto scrollbar-hide py-4 px-3 space-y-0.5">
-          {visibleItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === '/'}
-              onClick={onClose}
-              title={collapsed ? item.label : undefined}
-              className={({ isActive }) =>
-                `flex items-center rounded-lg py-2.5 text-sm font-medium transition-colors ${
-                  collapsed ? 'justify-center px-0' : 'gap-3 px-3'
-                } ${
-                  isActive
-                    ? 'bg-amber text-ink dark:text-dark-text'
-                    : 'text-paper/70 hover:bg-white/10 dark:hover:bg-dark-card/10 hover:text-paper'
-                }`
-              }
-            >
-              <Icon name={item.icon} className="h-[18px] w-[18px] shrink-0" />
-              {!collapsed && <span className="truncate">{item.label}</span>}
-            </NavLink>
+        {/* Nav items — scrollable if the list ever grows, scrollbar hidden.
+            Grouped into labeled sections for scanability; each section
+            gets a small uppercase heading when expanded, or just a hairline
+            divider (skipping the very first section, which needs none)
+            when collapsed to icon-only. */}
+        <nav className="flex-1 overflow-y-auto scrollbar-hide py-3 px-3 space-y-1">
+          {groupedNav.map(({ group, items }, groupIndex) => (
+            <div key={group}>
+              {collapsed ? (
+                groupIndex > 0 && <div className="my-2 border-t border-white/10" aria-hidden="true" />
+              ) : (
+                <div
+                  className={`px-3 text-[10.5px] font-semibold uppercase tracking-wider text-paper/35 select-none ${
+                    groupIndex === 0 ? 'pt-1 pb-1.5' : 'pt-4 pb-1.5'
+                  }`}
+                >
+                  {group}
+                </div>
+              )}
+
+              <div className="space-y-0.5">
+                {items.map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      `group relative flex items-center rounded-lg py-2.5 text-sm font-medium transition-all duration-150 ${
+                        collapsed ? 'justify-center px-0' : 'gap-3 px-3'
+                      } ${
+                        isActive
+                          ? 'bg-amber text-ink dark:text-dark-text shadow-[0_2px_10px_-2px_rgba(232,163,61,0.55)]'
+                          : 'text-paper/65 hover:bg-white/[0.07] hover:text-paper'
+                      }`
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {/* Active-route indicator bar — sits flush against the
+                            sidebar's own left edge (offset to clear the
+                            aside's rounded/shadow edge), a common "premium"
+                            nav tell that reads clearly even at a glance. */}
+                        {isActive && (
+                          <span
+                            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-3 h-4 w-[3px] rounded-full bg-amber lg:block hidden"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <Icon name={item.icon} className="h-[18px] w-[18px] shrink-0" />
+                        {!collapsed && <span className="truncate">{item.label}</span>}
+
+                        {/* Collapsed-mode tooltip — flyout label on hover/focus,
+                            since the icon alone loses its caption. Pure CSS,
+                            no extra state; native `title` still backs it up. */}
+                        {collapsed && (
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-md bg-ink dark:bg-dark-card px-2.5 py-1.5 text-xs font-medium text-paper dark:text-dark-text opacity-0 scale-95 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.45)] ring-1 ring-white/10 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 z-50 hidden lg:block"
+                          >
+                            {item.label}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
@@ -278,16 +370,22 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
             <button
               type="button"
               onClick={handleLogout}
-              className="h-9 w-9 rounded-lg flex items-center justify-center text-rose dark:text-dark-rose hover:bg-white/10 dark:hover:bg-dark-card/10 transition-colors"
+              className="group relative h-9 w-9 rounded-lg flex items-center justify-center text-rose dark:text-dark-rose hover:bg-rose/10 transition-colors"
               aria-label="Log Out"
               title="Log Out"
             >
               <Icon name="logout" className="h-[18px] w-[18px]" />
+              <span
+                role="tooltip"
+                className="pointer-events-none absolute left-full ml-3 whitespace-nowrap rounded-md bg-ink dark:bg-dark-card px-2.5 py-1.5 text-xs font-medium text-paper dark:text-dark-text opacity-0 scale-95 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.45)] ring-1 ring-white/10 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 z-50 hidden lg:block"
+              >
+                Log Out
+              </span>
             </button>
           ) : (
             <button
               type="button"
-              className="w-full flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm text-rose dark:text-dark-rose hover:bg-rose-light dark:hover:bg-dark-rose/15 transition-colors"
+              className="w-full flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-rose dark:text-dark-rose bg-rose/[0.08] hover:bg-rose/15 transition-colors"
               onClick={handleLogout}
             >
               <Icon name="logout" className="h-4 w-4" />
@@ -299,5 +397,3 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
     </>
   )
 }
-
-

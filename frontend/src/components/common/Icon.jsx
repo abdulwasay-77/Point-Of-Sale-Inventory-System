@@ -9,6 +9,11 @@ const paths = {
   categories: 'M12.6 2.6A2 2 0 0011.2 2H4a2 2 0 00-2 2v7.2a2 2 0 00.6 1.4l8.7 8.7a2.4 2.4 0 003.4 0l6.6-6.6a2.4 2.4 0 000-3.4zM7.5 7.5a1 1 0 110-2 1 1 0 010 2z',
   // Stacked layers — for product Variations (distinct from the Categories tag).
   variations: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+  // Diagonal ruler with tick marks — for Units of Measure (distinct from
+  // the stacked-layers "variations" mark; previously the two shared an
+  // icon, so this gives Units its own unique glyph).
+  unitOfMeasure:
+    'M20.83 14.83a2 2 0 010 2.83l-3.17 3.17a2 2 0 01-2.83 0L3.17 9.17a2 2 0 010-2.83l3.17-3.17a2 2 0 012.83 0zM7.5 9.5l2-2m1.5 5l2-2m1.5 5l2-2',
   customers: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM2 20c0-3.3 4-5 8-5s8 1.7 8 5',
   suppliers: 'M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1',
   purchases: 'M4 4h2l1.4 10.6a2 2 0 002 1.4h7.6a2 2 0 002-1.7L20 8H6M9 20a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z',

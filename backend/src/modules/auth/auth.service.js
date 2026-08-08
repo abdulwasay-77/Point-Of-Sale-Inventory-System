@@ -1,4 +1,3 @@
-
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../../config/db');
@@ -63,6 +62,32 @@ class AuthService {
 
     // Generate token
     const token = this.generateToken(user);
+    const userPayload = await this.buildUserResponse(user, business);
+
+    return {
+      token,
+      user: userPayload,
+    };
+  }
+
+  // Builds the exact same "full" user shape used by the login response —
+  // id, role, enabledModules, permissions, etc. Shared by login() and
+  // getUserById() so GET /api/auth/me can never drift out of sync with
+  // what login() returns. `business`, if already fetched by the caller,
+  // is reused; otherwise it's looked up here.
+  //
+  // This matters because enabledModules/permissions are otherwise only
+  // ever set ONCE, at login, and cached client-side (see AuthContext.jsx)
+  // — if a Super Admin changes a business's enabled modules or someone's
+  // role permissions change, an already-logged-in user's sidebar won't
+  // reflect it until this gets re-fetched. getUserById() is what
+  // GET /api/auth/me calls, and the frontend now calls that
+  // periodically/on focus specifically to pick this up without forcing
+  // a full re-login.
+  async buildUserResponse(user, business = null) {
+    const resolvedBusiness =
+      business || (await prisma.basePrisma.business.findUnique({ where: { id: user.business_id } }));
+
     const permissions = await getEffectivePermissions(user.id);
 
     // Not every User is an Employee — e.g. the primary admin, or any
@@ -71,27 +96,23 @@ class AuthService {
     // expenses.service.js#getEmployeeForUser) need to know whether
     // *this* logged-in user has an Employee row behind them before
     // offering "record your own expense" style actions, so we resolve
-    // it once here at login rather than every module re-deriving it
-    // independently.
+    // it once here rather than every module re-deriving it independently.
     const employee = await prisma.employee.findUnique({
       where: { user_id: user.id },
       select: { id: true },
     });
 
     return {
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isPrimaryAdmin: user.is_primary_admin,
-        avatarUrl: user.avatar_url,
-        themePreference: user.theme_preference,
-        employeeId: employee ? employee.id : null,
-        enabledModules: business.enabled_modules,
-        permissions,
-      }
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isPrimaryAdmin: user.is_primary_admin,
+      avatarUrl: user.avatar_url,
+      themePreference: user.theme_preference,
+      employeeId: employee ? employee.id : null,
+      enabledModules: resolvedBusiness ? resolvedBusiness.enabled_modules : [],
+      permissions,
     };
   }
 
@@ -109,24 +130,18 @@ class AuthService {
   async getUserById(userId) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        is_active: true,
-        created_at: true
-      }
     });
 
     if (!user) {
       throw new Error('User not found');
     }
 
-    return user;
+    if (!user.is_active) {
+      throw new Error('Account is deactivated');
+    }
+
+    return this.buildUserResponse(user);
   }
 }
 
 module.exports = new AuthService();
-
-

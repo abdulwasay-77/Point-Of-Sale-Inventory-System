@@ -1,7 +1,6 @@
-
 const bcrypt = require('bcryptjs');
 const prisma = require('../../config/db');
-const { PERMISSION_CATALOG } = require('../../config/permissions');
+const { PERMISSION_CATALOG, filterCatalogForModules } = require('../../config/permissions');
 const { getEffectivePermissions } = require('../../utils/effectivePermissions');
 
 class UsersService {
@@ -239,8 +238,14 @@ class UsersService {
     return this.getById(id);
   }
 
-  getPermissionCatalog() {
-    return { catalog: PERMISSION_CATALOG };
+  // enabledModules comes from the current business (req.business.enabled_modules
+  // — see users.controller.js). Filters out permissions for modules the
+  // business's plan doesn't include, so the "Add Role" and per-user
+  // Permissions checkbox grids never offer a permission that would do
+  // nothing anyway (authMiddleware.js's module gate blocks the
+  // underlying routes regardless — this just keeps the UI honest about it).
+  getPermissionCatalog(enabledModules = []) {
+    return { catalog: filterCatalogForModules(PERMISSION_CATALOG, enabledModules) };
   }
 
   toDTO(user) {
