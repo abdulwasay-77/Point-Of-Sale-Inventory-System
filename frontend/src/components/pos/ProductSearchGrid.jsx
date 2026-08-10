@@ -177,18 +177,28 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
             (direction === 'right' && dx > 1) ||
             (direction === 'up' && dy < -1) ||
             (direction === 'down' && dy > 1)
-          return { button, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), isInDirection }
+          return {
+            button,
+            primary: Math.abs(horizontal ? dx : dy),
+            secondary: Math.abs(horizontal ? dy : dx),
+            x,
+            isInDirection,
+          }
         })
         .filter((candidate) => candidate.isInDirection)
-      const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
-      const bestCandidate = (alignedCandidates.length ? alignedCandidates : candidates)
-        .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]
+      const bestCandidate = horizontal
+        ? candidates.filter((candidate) => candidate.secondary <= 40).sort((a, b) => a.primary - b.primary)[0]
+        : (() => {
+            if (candidates.length === 0) return undefined
+            const nearestRowDistance = Math.min(...candidates.map((candidate) => candidate.primary))
+            return candidates
+              .filter((candidate) => candidate.primary <= nearestRowDistance + 40)
+              .sort((a, b) => a.secondary - b.secondary || a.x - b.x)[0]
+          })()
 
-      // In a single-column list (and at the edge of a responsive grid),
-      // Left/Right still have a predictable next/previous result.
-      const linearOffset = direction === 'left' || direction === 'up' ? -1 : 1
-      const linearFallback = buttons[currentIndex + linearOffset]
-      focusResult(bestCandidate?.button || linearFallback || current)
+      // Do not let a horizontal Arrow leave its visual row. At a row edge
+      // the selection stays put instead of unexpectedly jumping downward.
+      focusResult(bestCandidate?.button || current)
     }
 
     function moveSegmentedControl(target, selector, direction) {
@@ -558,9 +568,6 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
             </span>
           )}
         </div>
-        <p className="text-xs text-ink-muted dark:text-dark-muted">
-          Keyboard: <kbd className="font-medium">F2</kbd> search · <kbd className="font-medium">Alt+1</kbd> products · <kbd className="font-medium">Alt+2</kbd> bundles · <kbd className="font-medium">Arrow keys</kbd> select · <kbd className="font-medium">Enter</kbd> add.
-        </p>
         {tab === 'products' && categories.length > 2 && (
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide -mx-1 px-1">
             {categories.map((cat) => (

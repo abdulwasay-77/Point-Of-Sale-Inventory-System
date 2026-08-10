@@ -44,15 +44,10 @@ import { useGlobalKeyboardNavigation } from './hooks/useGlobalKeyboardNavigation
  *   permission — see each route's requiredPermission below).
  */
 export default function App() {
-  const keyboardMode = useGlobalKeyboardNavigation()
+  useGlobalKeyboardNavigation()
 
   return (
     <>
-      {keyboardMode && (
-        <div className="fixed bottom-4 right-4 z-[60] rounded-full bg-ink dark:bg-dark-card text-paper dark:text-dark-text px-3 py-1.5 text-xs font-semibold shadow-lg ring-1 ring-amber/60">
-          Keyboard mode on · F1 to exit
-        </div>
-      )}
       <Routes>
       {/* Public routes */}
       <Route element={<AuthLayout />}>

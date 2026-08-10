@@ -552,12 +552,6 @@ export default function CartPanel({
           >
             {isCheckingOut ? 'Processing…' : 'Checkout'}
           </button>
-          <p className="mt-2 text-center text-xs text-ink-muted dark:text-dark-muted">
-            Keyboard: <kbd className="font-medium">F3</kbd> customer · <kbd className="font-medium">F4</kbd> payment · <kbd className="font-medium">F6</kbd> paid amount · <kbd className="font-medium">F7</kbd> empty cart · <kbd className="font-medium">F8</kbd> checkout
-          </p>
-          <p className="mt-1 text-center text-xs text-ink-muted dark:text-dark-muted">
-            Focus a cart line, then use <kbd className="font-medium">Ctrl+↑</kbd>/<kbd className="font-medium">Ctrl+↓</kbd> to change its quantity.
-          </p>
         </div>
       </div>
 

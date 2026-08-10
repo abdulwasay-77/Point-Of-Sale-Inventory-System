@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 // Letter shortcuts are deliberately modifier-based. Plain letters must always
 // remain available for names, SKUs, notes, search, and every other form field.
@@ -35,7 +36,10 @@ function isEditingControl(element) {
 
 function isVisibleControl(element) {
   const rect = element.getBoundingClientRect()
-  return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < globalThis.innerHeight && rect.left < globalThis.innerWidth
+  const style = globalThis.getComputedStyle(element)
+  // Controls outside a scroll container's current viewport must remain
+  // eligible: Arrow navigation will scroll them into view after focusing.
+  return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && !element.closest('[aria-hidden="true"]')
 }
 
 function findDirectionalControl(controls, current, direction) {
@@ -55,20 +59,35 @@ function findDirectionalControl(controls, current, direction) {
         (direction === 'right' && dx > 1) ||
         (direction === 'up' && dy < -1) ||
         (direction === 'down' && dy > 1)
-      return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
+      return {
+        control,
+        primary: Math.abs(horizontal ? dx : dy),
+        secondary: Math.abs(horizontal ? dy : dx),
+        x: rect.left + rect.width / 2,
+        matchesDirection,
+      }
     })
     .filter((candidate) => candidate.matchesDirection)
 
-  // A controller-style Right move should prefer the control in the same
-  // visual row (SKU -> Category), not a control far below with a tiny
-  // accidental horizontal offset. The same rule applies vertically.
-  const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
-  return (alignedCandidates.length ? alignedCandidates : candidates)
-    .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]?.control
+  if (horizontal) {
+    // Never let Left/Right leave its current visual row.
+    return candidates
+      .filter((candidate) => candidate.secondary <= 40)
+      .sort((a, b) => a.primary - b.primary)[0]?.control
+  }
+
+  // Up/Down first find the nearest form/card row, then choose the closest
+  // column on that row. A tie intentionally picks the leftmost field so a
+  // full-width field moves Down to the beginning of the next row.
+  const nearestRowDistance = Math.min(...candidates.map((candidate) => candidate.primary))
+  return candidates
+    .filter((candidate) => candidate.primary <= nearestRowDistance + 40)
+    .sort((a, b) => a.secondary - b.secondary || a.x - b.x)[0]?.control
 }
 
 export function useGlobalKeyboardNavigation() {
   const [keyboardMode, setKeyboardMode] = useState(false)
+  const navigate = useNavigate()
 
   useEffect(() => {
     globalThis.document.documentElement.dataset.keyboardMode = String(keyboardMode)
@@ -90,12 +109,15 @@ export function useGlobalKeyboardNavigation() {
         return
       }
 
-      if (event.altKey && !event.ctrlKey && !event.metaKey && !isEditing) {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) {
         const route = NAVIGATION_SHORTCUTS[event.key.toLowerCase()]
+        // The sidebar omits links the user is not allowed to open. Check
+        // that permission-aware source, but use the router directly so the
+        // shortcut works even when the sidebar link is off-screen/collapsed.
         const link = route && globalThis.document.querySelector(`a[href="${route}"]`)
-        if (link && isVisibleControl(link)) {
+        if (link) {
           event.preventDefault()
-          link.click()
+          navigate(route)
           return
         }
       }
@@ -142,7 +164,7 @@ export function useGlobalKeyboardNavigation() {
 
     globalThis.document.addEventListener('keydown', handleKeyDown)
     return () => globalThis.document.removeEventListener('keydown', handleKeyDown)
-  }, [keyboardMode])
+  }, [keyboardMode, navigate])
 
   return keyboardMode
 }

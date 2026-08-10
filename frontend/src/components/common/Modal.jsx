@@ -90,12 +90,24 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', k
               (direction === 'right' && dx > 1) ||
               (direction === 'up' && dy < -1) ||
               (direction === 'down' && dy > 1)
-            return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
+            return {
+              control,
+              primary: Math.abs(horizontal ? dx : dy),
+              secondary: Math.abs(horizontal ? dy : dx),
+              x: rect.left + rect.width / 2,
+              matchesDirection,
+            }
           })
           .filter((candidate) => candidate.matchesDirection)
-        const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
-        const next = (alignedCandidates.length ? alignedCandidates : candidates)
-          .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]?.control
+        const next = horizontal
+          ? candidates.filter((candidate) => candidate.secondary <= 40).sort((a, b) => a.primary - b.primary)[0]?.control
+          : (() => {
+              if (candidates.length === 0) return undefined
+              const nearestRowDistance = Math.min(...candidates.map((candidate) => candidate.primary))
+              return candidates
+                .filter((candidate) => candidate.primary <= nearestRowDistance + 40)
+                .sort((a, b) => a.secondary - b.secondary || a.x - b.x)[0]?.control
+            })()
 
         if (next) {
           event.preventDefault()
