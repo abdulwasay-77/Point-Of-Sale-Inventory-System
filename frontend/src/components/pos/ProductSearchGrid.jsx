@@ -196,9 +196,67 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
               .sort((a, b) => a.secondary - b.secondary || a.x - b.x)[0]
           })()
 
-      // Do not let a horizontal Arrow leave its visual row. At a row edge
-      // the selection stays put instead of unexpectedly jumping downward.
-      focusResult(bestCandidate?.button || current)
+      if (bestCandidate?.button) {
+        focusResult(bestCandidate.button)
+        return
+      }
+
+      // At the edge of the product panel, continue into the adjacent cart
+      // panel instead of trapping focus on the final product. Only buttons
+      // are included here: landing on a customer/payment select would make
+      // its native arrows change a value rather than continue navigation.
+      const cartButtons = Array.from(
+        globalThis.document.querySelectorAll('[data-pos-navigation-group="cart"] button:not([disabled])'),
+      )
+      // The first quantity control is the intentional entry point into an
+      // active cart. It is stable even when the cart's internal scroll
+      // position changes, unlike choosing an entry solely from rectangles.
+      const cartEntry =
+        direction === 'right'
+          ? globalThis.document.querySelector('[data-pos-navigation-group="cart"] [data-cart-line-anchor]:not([disabled])')
+          : null
+      const cartCandidate = cartEntry || findDirectionalButton(cartButtons, current, direction)
+      if (cartCandidate) {
+        cartCandidate.focus({ preventScroll: true })
+        cartCandidate.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        return
+      }
+
+      focusResult(current)
+    }
+
+    function findDirectionalButton(buttons, current, direction) {
+      const currentRect = current.getBoundingClientRect()
+      const currentX = currentRect.left + currentRect.width / 2
+      const currentY = currentRect.top + currentRect.height / 2
+      const horizontal = direction === 'left' || direction === 'right'
+      const candidates = buttons
+        .map((button) => {
+          const rect = button.getBoundingClientRect()
+          const x = rect.left + rect.width / 2
+          const y = rect.top + rect.height / 2
+          const dx = x - currentX
+          const dy = y - currentY
+          const isInDirection =
+            (direction === 'left' && dx < -1) ||
+            (direction === 'right' && dx > 1) ||
+            (direction === 'up' && dy < -1) ||
+            (direction === 'down' && dy > 1)
+          return {
+            button,
+            primary: Math.abs(horizontal ? dx : dy),
+            secondary: Math.abs(horizontal ? dy : dx),
+            isInDirection,
+          }
+        })
+        .filter((candidate) => candidate.isInDirection)
+
+      // Prefer the control aligned with the current card, but still allow
+      // the closest directional control when the two panels have different
+      // row layouts (for example, a short cart next to a product grid).
+      return candidates
+        .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]
+        ?.button
     }
 
     function moveSegmentedControl(target, selector, direction) {
