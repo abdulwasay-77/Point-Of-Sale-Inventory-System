@@ -79,7 +79,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', k
         const currentX = currentRect.left + currentRect.width / 2
         const currentY = currentRect.top + currentRect.height / 2
         const horizontal = direction === 'left' || direction === 'right'
-        const next = controls
+        const candidates = controls
           .filter((control) => control !== current)
           .map((control) => {
             const rect = control.getBoundingClientRect()
@@ -93,7 +93,9 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', k
             return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
           })
           .filter((candidate) => candidate.matchesDirection)
-          .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]?.control
+        const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
+        const next = (alignedCandidates.length ? alignedCandidates : candidates)
+          .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]?.control
 
         if (next) {
           event.preventDefault()

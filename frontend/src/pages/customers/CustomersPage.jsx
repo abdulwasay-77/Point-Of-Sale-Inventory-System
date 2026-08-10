@@ -144,7 +144,7 @@ export default function CustomersPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Customers"
         subtitle="Keep track of who's buying from you."
@@ -293,5 +293,4 @@ export default function CustomersPage() {
     </div>
   )
 }
-
 

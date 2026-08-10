@@ -67,7 +67,7 @@ export default function InventoryPage() {
   ]
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Inventory" subtitle="Current stock levels across your catalog." />
 
       {error && <p className="text-sm text-rose dark:text-dark-rose bg-rose-light dark:bg-dark-rose/15 rounded-lg px-3 py-2 mb-4">{error}</p>}

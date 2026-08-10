@@ -136,7 +136,7 @@ export default function PurchasesPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Purchases"
         subtitle="Record incoming stock from your suppliers."
@@ -643,5 +643,4 @@ function NewPurchaseModal({ isOpen, onClose, onSave, suppliers, products, wareho
     </>
   )
 }
-
 

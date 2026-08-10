@@ -44,7 +44,7 @@ function findDirectionalControl(controls, current, direction) {
   const currentY = currentRect.top + currentRect.height / 2
   const horizontal = direction === 'left' || direction === 'right'
 
-  return controls
+  const candidates = controls
     .filter((control) => control !== current)
     .map((control) => {
       const rect = control.getBoundingClientRect()
@@ -58,7 +58,13 @@ function findDirectionalControl(controls, current, direction) {
       return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
     })
     .filter((candidate) => candidate.matchesDirection)
-    .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]?.control
+
+  // A controller-style Right move should prefer the control in the same
+  // visual row (SKU -> Category), not a control far below with a tiny
+  // accidental horizontal offset. The same rule applies vertically.
+  const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
+  return (alignedCandidates.length ? alignedCandidates : candidates)
+    .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]?.control
 }
 
 export function useGlobalKeyboardNavigation() {
@@ -122,7 +128,8 @@ export function useGlobalKeyboardNavigation() {
 
       const current = target?.closest?.(CONTROL_SELECTOR)
       if (!current) return
-      const controls = Array.from(globalThis.document.querySelectorAll(CONTROL_SELECTOR)).filter(isVisibleControl)
+      const scope = current.closest('[data-keyboard-scope]') || globalThis.document
+      const controls = Array.from(scope.querySelectorAll(CONTROL_SELECTOR)).filter(isVisibleControl)
       const next = shouldAdvanceField
         ? findDirectionalControl(controls, current, 'down') || controls[controls.indexOf(current) + 1]
         : findDirectionalControl(controls, current, direction)

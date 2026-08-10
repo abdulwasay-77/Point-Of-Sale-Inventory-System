@@ -112,7 +112,7 @@ export default function PosPage() {
       const currentY = currentRect.top + currentRect.height / 2
       const horizontal = direction === 'left' || direction === 'right'
 
-      return controls
+      const candidates = controls
         .filter((control) => control !== current)
         .map((control) => {
           const rect = control.getBoundingClientRect()
@@ -128,7 +128,9 @@ export default function PosPage() {
           return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
         })
         .filter((candidate) => candidate.matchesDirection)
-        .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]?.control
+      const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
+      return (alignedCandidates.length ? alignedCandidates : candidates)
+        .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]?.control
     }
 
     function handleArrowNavigation(event) {
@@ -162,7 +164,7 @@ export default function PosPage() {
   }, [])
 
   return (
-    <div data-pos-navigation-root className="h-full flex flex-col">
+    <div data-pos-navigation-root data-keyboard-scope className="h-full flex flex-col">
       <div className="relative z-10 mb-4 flex items-start gap-3">
         <span className="hidden sm:block w-1 h-9 rounded-full bg-gradient-to-b from-amber to-amber-dark mt-0.5 shrink-0" />
         <div>

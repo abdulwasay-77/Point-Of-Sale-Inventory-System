@@ -61,7 +61,7 @@ export default function SalesHistoryPage() {
   )
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Sales History" subtitle="Browse and search past invoices." />
 
       {error && <p className="text-sm text-rose dark:text-dark-rose bg-rose-light dark:bg-dark-rose/15 rounded-lg px-3 py-2 mb-4">{error}</p>}

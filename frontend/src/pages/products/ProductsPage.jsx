@@ -118,7 +118,7 @@ export default function ProductsPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Products"
         subtitle="Manage your catalog — pricing, stock, and categories."
@@ -270,5 +270,4 @@ export default function ProductsPage() {
     </div>
   )
 }
-
 

@@ -180,13 +180,15 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
           return { button, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), isInDirection }
         })
         .filter((candidate) => candidate.isInDirection)
-        .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)
+      const alignedCandidates = candidates.filter((candidate) => candidate.secondary <= Math.max(48, candidate.primary * 0.75))
+      const bestCandidate = (alignedCandidates.length ? alignedCandidates : candidates)
+        .sort((a, b) => a.secondary - b.secondary || a.primary - b.primary)[0]
 
       // In a single-column list (and at the edge of a responsive grid),
       // Left/Right still have a predictable next/previous result.
       const linearOffset = direction === 'left' || direction === 'up' ? -1 : 1
       const linearFallback = buttons[currentIndex + linearOffset]
-      focusResult(candidates[0]?.button || linearFallback || current)
+      focusResult(bestCandidate?.button || linearFallback || current)
     }
 
     function moveSegmentedControl(target, selector, direction) {

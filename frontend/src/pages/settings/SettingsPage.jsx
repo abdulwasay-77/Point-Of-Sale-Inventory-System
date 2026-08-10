@@ -148,7 +148,7 @@ export default function SettingsPage() {
   if (isLoading || !form) return <Loading message="Loading settings…" />
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Settings" subtitle="Business info, defaults, appearance, and backups." />
 
       {error && <p className="text-sm text-rose dark:text-dark-rose bg-rose-light dark:bg-dark-rose/15 rounded-lg px-3 py-2 mb-4">{error}</p>}
