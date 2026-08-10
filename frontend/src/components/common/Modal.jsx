@@ -34,7 +34,7 @@ import { onApiError } from '../../utils/errorBus'
  * Modal always covers the full screen regardless of where it's opened
  * from.
  */
-export default function Modal({ isOpen, onClose, title, children, size = 'md', keyboardNavigation = false, initialFocusSelector }) {
+export default function Modal({ isOpen, onClose, title, children, size = 'md', keyboardNavigation = true, initialFocusSelector }) {
   const [isPulsing, setIsPulsing] = useState(false)
   const pulseTimeoutRef = useRef(null)
   const panelRef = useRef(null)
@@ -71,7 +71,8 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', k
 
       const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
       const direction = directions[event.key]
-      if (direction && !target?.matches?.('input, textarea, select, [contenteditable="true"]')) {
+      const keyboardMode = globalThis.document.documentElement.dataset.keyboardMode === 'true'
+      if (direction && (keyboardMode || !target?.matches?.('input, textarea, select, [contenteditable="true"]'))) {
         const current = target?.closest?.(focusableSelector)
         if (!current) return
         const currentRect = current.getBoundingClientRect()

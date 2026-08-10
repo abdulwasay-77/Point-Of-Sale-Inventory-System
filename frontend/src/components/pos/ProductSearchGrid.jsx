@@ -189,6 +189,19 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       focusResult(candidates[0]?.button || linearFallback || current)
     }
 
+    function moveSegmentedControl(target, selector, direction) {
+      const controls = Array.from(globalThis.document.querySelectorAll(selector))
+      const current = target.closest(selector)
+      const currentIndex = controls.indexOf(current)
+      if (currentIndex === -1) return false
+      const offset = direction === 'left' || direction === 'up' ? -1 : 1
+      const next = controls[currentIndex + offset]
+      if (!next) return true
+      next.focus()
+      next.click()
+      return true
+    }
+
     function handleKeyDown(event) {
       if (globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) return
 
@@ -210,14 +223,31 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       }
 
       const target = event.target
+      const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+      const direction = directions[event.key]
+      if (direction && target?.closest?.('[data-pos-tab]')) {
+        event.preventDefault()
+        moveSegmentedControl(target, '[data-pos-tab]', direction)
+        return
+      }
+      if (direction && target?.closest?.('[data-pos-view]')) {
+        event.preventDefault()
+        moveSegmentedControl(target, '[data-pos-view]', direction)
+        return
+      }
+      if (direction && target?.closest?.('[data-pos-category]')) {
+        event.preventDefault()
+        moveSegmentedControl(target, '[data-pos-category]', direction)
+        return
+      }
+
       const isSearch = target === searchInputRef.current
       const isResultButton = target?.closest?.('[data-pos-result-key]')
       if (!isSearch && !isResultButton) return
 
-      const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
-      if (directions[event.key]) {
+      if (direction) {
         event.preventDefault()
-        moveResult(directions[event.key])
+        moveResult(direction)
       }
 
       if (event.key === 'Enter' && isSearch && selectedResultKey) {
@@ -478,6 +508,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
               <button
                 key={t.id}
                 type="button"
+                data-pos-tab
                 onClick={() => setTab(t.id)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                   tab === t.id ? 'bg-amber text-ink dark:text-dark-text shadow-[0_4px_12px_-4px_rgba(232,163,61,0.5)]' : 'text-ink-muted dark:text-dark-muted hover:bg-paper-dim dark:hover:bg-dark-card2'
@@ -492,6 +523,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
               <button
                 key={v.id}
                 type="button"
+                data-pos-view
                 title={v.label}
                 aria-label={v.label}
                 aria-pressed={viewMode === v.id}
@@ -533,6 +565,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
               <button
                 key={cat}
                 type="button"
+                data-pos-category
                 onClick={() => setActiveCategory(cat)}
                 className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors duration-150 ${
                   activeCategory === cat

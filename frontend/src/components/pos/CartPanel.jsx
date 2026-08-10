@@ -158,6 +158,38 @@ export default function CartPanel({
       const isEditingField = target?.matches?.('input, textarea, select, [contenteditable="true"]')
       const focusedLineId = target?.closest?.('[data-cart-line-id]')?.dataset.cartLineId
       const selectedItem = items.find((item) => item.lineId === selectedLineId)
+
+      // Cart rows are a two-dimensional keyboard surface: Up/Down moves to
+      // the matching action on the previous/next row, while Left/Right moves
+      // across actions within the current row. Inputs keep their native keys.
+      if (!event.ctrlKey && !isEditingField && focusedLineId) {
+        const currentRow = target?.closest?.('[data-cart-line-id]')
+        const currentButton = target?.closest?.('button:not([disabled])')
+        const direction = event.key
+        if (currentRow && currentButton && (direction === 'ArrowLeft' || direction === 'ArrowRight')) {
+          const rowButtons = Array.from(currentRow.querySelectorAll('button:not([disabled])'))
+          const currentIndex = rowButtons.indexOf(currentButton)
+          const nextButton = rowButtons[currentIndex + (direction === 'ArrowLeft' ? -1 : 1)]
+          if (nextButton) {
+            event.preventDefault()
+            nextButton.focus()
+            return
+          }
+        }
+        if (currentRow && currentButton && (direction === 'ArrowUp' || direction === 'ArrowDown')) {
+          const rows = Array.from(globalThis.document.querySelectorAll('[data-cart-line-id]'))
+          const currentIndex = rows.indexOf(currentRow)
+          const nextRow = rows[currentIndex + (direction === 'ArrowUp' ? -1 : 1)]
+          const nextButton = nextRow?.querySelector('[data-cart-line-anchor]:not([disabled])') || nextRow?.querySelector('button:not([disabled])')
+          if (nextButton) {
+            event.preventDefault()
+            nextButton.focus()
+            nextButton.scrollIntoView({ block: 'nearest' })
+            return
+          }
+        }
+      }
+
       if (!event.ctrlKey || isEditingField || !selectedItem || focusedLineId !== selectedLineId) return
 
       if (event.key === 'ArrowUp' && selectedItem.quantity < selectedItem.stock) {
@@ -271,6 +303,7 @@ export default function CartPanel({
                     <div className="flex items-center border border-line dark:border-dark-border rounded-lg overflow-hidden bg-white dark:bg-dark-card">
                       <button
                         type="button"
+                        data-cart-line-anchor
                         className="px-2.5 py-1 text-ink-muted dark:text-dark-muted transition-colors duration-150 hover:bg-paper-dim dark:hover:bg-dark-card2 hover:text-ink dark:hover:text-dark-text"
                         onClick={() => onUpdateQuantity(item.lineId, item.quantity - 1)}
                         aria-label="Decrease quantity"

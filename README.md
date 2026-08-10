@@ -129,7 +129,7 @@ The POS can also be operated without the mouse for the main cashier flow. These 
 | `F2` | Focus and select the product/bundle search field. |
 | `Alt+1` | Switch to the Products tab. |
 | `Alt+2` | Switch to the Bundles tab. |
-| `Left` / `Right` / `Up` / `Down` | Move through visible POS cards and action buttons by screen position. From the search field or a product/bundle card, moves the highlighted result. |
+| `Left` / `Right` / `Up` / `Down` | Move through visible POS controls. On product/bundle cards, moves the highlighted result; on tabs, views, and categories, focuses and applies the adjacent choice; in a cart row, Left/Right moves between row actions and Up/Down moves to the adjacent row. |
 | `Tab` | Move through the visible POS controls and product buttons. |
 | `Enter` / `Space` | Add the highlighted product/bundle or activate the focused POS control. |
 | `F3` | Focus the customer selector. |
@@ -152,6 +152,35 @@ At checkout, select a customer (or the walk-in customer), payment method, and te
 6. creates a credit balance or installment plan when the selected flow needs one.
 
 The completed invoice can be viewed in sales history, printed, and exported as a receipt PDF in the client. A completed sale can be abandoned/reversed through the supported sales action, which reverses the relevant stock effect.
+
+### Keyboard navigation across the application
+
+Every page supports keyboard navigation. Press `F1` to turn on **Keyboard Mode** (a visible indicator appears at the bottom-right); press `F1` again to return to normal browser editing. In Keyboard Mode, `Left`/`Right`/`Up`/`Down` move to the nearest visible control in that direction, including inputs and selects. `Enter` on a form field advances to the next control below it; `Enter`/`Space` activates the focused button, link, checkbox, or switch. This enables a controller-like workflow without preventing normal typing—turn Keyboard Mode off whenever native cursor/select behavior is needed.
+
+Use `/` to focus the global product search. The following `Alt+letter` shortcuts navigate only when the related sidebar item is available to the signed-in user (permission and module checks are respected):
+
+| Shortcut | Destination |
+| --- | --- |
+| `Alt+D` / `Alt+H` | Dashboard |
+| `Alt+P` | POS |
+| `Alt+O` | Products |
+| `Alt+I` | Inventory |
+| `Alt+C` | Customers |
+| `Alt+U` | Suppliers |
+| `Alt+S` | Sales |
+| `Alt+R` | Reports |
+| `Alt+E` | Expenses |
+| `Alt+W` | Warehouses |
+| `Alt+K` | Kits & Bundles |
+| `Alt+B` | Barcode Labels |
+| `Alt+G` | Categories |
+| `Alt+V` | Variations |
+| `Alt+M` | Units of Measure |
+| `Alt+L` | Payroll |
+| `Alt+T` | Settings |
+| `Alt+Y` | Profile |
+
+Dialogs keep focus inside themselves while open. In Keyboard Mode, Arrow keys navigate between all dialog controls and `Enter` advances through fields; outside the mode, radio/select/range controls retain their native Arrow-key behavior. Use `Esc` to close.
 
 ### 7. Customer credit and installment plans
 

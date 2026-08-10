@@ -34,6 +34,7 @@ import NotFoundPage from './pages/errors/NotFoundPage'
 import PlatformLoginPage from './pages/platform/PlatformLoginPage'
 import PlatformDashboardPage from './pages/platform/PlatformDashboardPage'
 import PlatformProtectedRoute from './routes/PlatformProtectedRoute'
+import { useGlobalKeyboardNavigation } from './hooks/useGlobalKeyboardNavigation'
 
 /**
  * Central route configuration.
@@ -43,8 +44,16 @@ import PlatformProtectedRoute from './routes/PlatformProtectedRoute'
  *   permission — see each route's requiredPermission below).
  */
 export default function App() {
+  const keyboardMode = useGlobalKeyboardNavigation()
+
   return (
-    <Routes>
+    <>
+      {keyboardMode && (
+        <div className="fixed bottom-4 right-4 z-[60] rounded-full bg-ink dark:bg-dark-card text-paper dark:text-dark-text px-3 py-1.5 text-xs font-semibold shadow-lg ring-1 ring-amber/60">
+          Keyboard mode on · F1 to exit
+        </div>
+      )}
+      <Routes>
       {/* Public routes */}
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<LoginPage />} />
@@ -284,8 +293,7 @@ export default function App() {
       />
 
       <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+      </Routes>
+    </>
   )
 }
-
-
