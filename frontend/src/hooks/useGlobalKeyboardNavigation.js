@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 // Letter shortcuts are deliberately modifier-based. Plain letters must always
 // remain available for names, SKUs, notes, search, and every other form field.
@@ -88,6 +88,8 @@ function findDirectionalControl(controls, current, direction) {
 export function useGlobalKeyboardNavigation() {
   const [keyboardMode, setKeyboardMode] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+  const focusPageAfterNavigationRef = useRef(false)
 
   useEffect(() => {
     globalThis.document.documentElement.dataset.keyboardMode = String(keyboardMode)
@@ -95,6 +97,18 @@ export function useGlobalKeyboardNavigation() {
       delete globalThis.document.documentElement.dataset.keyboardMode
     }
   }, [keyboardMode])
+
+  useEffect(() => {
+    if (!focusPageAfterNavigationRef.current) return undefined
+    const frameId = globalThis.requestAnimationFrame(() => {
+      const scope = globalThis.document.querySelector('[data-keyboard-scope]')
+      const firstControl = Array.from(scope?.querySelectorAll(CONTROL_SELECTOR) || []).find(isVisibleControl)
+      firstControl?.focus({ preventScroll: true })
+      firstControl?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      focusPageAfterNavigationRef.current = false
+    })
+    return () => globalThis.cancelAnimationFrame(frameId)
+  }, [location.pathname])
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -117,6 +131,7 @@ export function useGlobalKeyboardNavigation() {
         const link = route && globalThis.document.querySelector(`a[href="${route}"]`)
         if (link) {
           event.preventDefault()
+          focusPageAfterNavigationRef.current = true
           navigate(route)
           return
         }
@@ -142,6 +157,20 @@ export function useGlobalKeyboardNavigation() {
       const shouldAdvanceField = keyboardMode && event.key === 'Enter' && isEditing
       if (!direction && !shouldAdvanceField) return
       if (!keyboardMode && isEditing) return
+
+      // From the sidebar, Right Arrow explicitly enters the current page.
+      // This avoids choosing another sidebar item just because it happens to
+      // be geometrically closer than the content area.
+      if (direction === 'right' && target?.closest?.('[data-keyboard-sidebar]')) {
+        const scope = globalThis.document.querySelector('[data-keyboard-scope]')
+        const firstControl = Array.from(scope?.querySelectorAll(CONTROL_SELECTOR) || []).find(isVisibleControl)
+        if (firstControl) {
+          event.preventDefault()
+          firstControl.focus({ preventScroll: true })
+          firstControl.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }
+        return
+      }
 
       // POS product cards use their own result-aware navigation. The
       // current POS page also handles its specialized controls directly.

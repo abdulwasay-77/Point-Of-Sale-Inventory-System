@@ -165,6 +165,7 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
       )}
 
       <aside
+        data-keyboard-sidebar
         className={`fixed lg:sticky top-0 left-0 h-screen bg-gradient-to-b from-ink to-[#171b24] text-paper z-40 flex flex-col shrink-0 transition-[width,transform] duration-200 ease-in-out shadow-[4px_0_24px_-8px_rgba(0,0,0,0.35)] ${
           isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         } ${collapsed ? 'w-[92px]' : 'w-64'}`}

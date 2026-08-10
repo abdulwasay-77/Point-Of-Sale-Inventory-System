@@ -214,6 +214,16 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       return true
     }
 
+    function focusSearch() {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+
+    function focusFirstResult() {
+      const firstResult = globalThis.document.querySelector('[data-pos-product-panel] [data-pos-result-key]:not([disabled])')
+      focusResult(firstResult)
+    }
+
     function handleKeyDown(event) {
       if (globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) return
 
@@ -239,17 +249,21 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       const direction = directions[event.key]
       if (direction && target?.closest?.('[data-pos-tab]')) {
         event.preventDefault()
-        moveSegmentedControl(target, '[data-pos-tab]', direction)
+        if (direction === 'left' || direction === 'right') moveSegmentedControl(target, '[data-pos-tab]', direction)
+        if (direction === 'down') focusSearch()
         return
       }
       if (direction && target?.closest?.('[data-pos-view]')) {
         event.preventDefault()
-        moveSegmentedControl(target, '[data-pos-view]', direction)
+        if (direction === 'left' || direction === 'right') moveSegmentedControl(target, '[data-pos-view]', direction)
+        if (direction === 'down') focusSearch()
         return
       }
       if (direction && target?.closest?.('[data-pos-category]')) {
         event.preventDefault()
-        moveSegmentedControl(target, '[data-pos-category]', direction)
+        if (direction === 'left' || direction === 'right') moveSegmentedControl(target, '[data-pos-category]', direction)
+        if (direction === 'down') focusFirstResult()
+        if (direction === 'up') focusSearch()
         return
       }
 
@@ -259,7 +273,15 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
 
       if (direction) {
         event.preventDefault()
-        moveResult(direction)
+        if (isSearch && direction === 'down') focusFirstResult()
+        else if (isSearch && direction === 'up') globalThis.document.querySelector('[data-pos-tab][aria-pressed="true"]')?.focus()
+        else {
+          const before = globalThis.document.activeElement
+          moveResult(direction)
+          // Up from the first result returns to the search field instead of
+          // leaving focus trapped in the result grid.
+          if (direction === 'up' && globalThis.document.activeElement === before) focusSearch()
+        }
       }
 
       if (event.key === 'Enter' && isSearch && selectedResultKey) {
@@ -360,9 +382,13 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
         {product.coverageQuantity && product.coverageUomId && !outOfStock && (
           <button
             type="button"
-            onClick={() => setAreaModalProduct(product)}
+            data-pos-result-key={`${resultKey}-area`}
+            onClick={() => {
+              setSelectedResultKey(`${resultKey}-area`)
+              setAreaModalProduct(product)
+            }}
             title="Area calculator"
-            className={`w-full mt-2 flex items-center justify-center gap-1.5 text-xs text-amber-dark dark:text-amber font-medium rounded-lg border border-amber/40 transition-all duration-200 hover:bg-amber/10 hover:-translate-y-0.5 ${
+            className={`w-full mt-2 flex items-center justify-center gap-1.5 text-xs text-amber-dark dark:text-amber font-medium rounded-lg border border-amber/40 transition-all duration-200 hover:bg-amber/10 hover:-translate-y-0.5 ${selectedResultKey === `${resultKey}-area` ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card' : ''} ${
               isGrid ? 'py-1' : 'py-1.5'
             }`}
           >
@@ -422,9 +448,13 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
         {product.coverageQuantity && product.coverageUomId && !outOfStock && (
           <button
             type="button"
-            onClick={() => setAreaModalProduct(product)}
+            data-pos-result-key={`${resultKey}-area`}
+            onClick={() => {
+              setSelectedResultKey(`${resultKey}-area`)
+              setAreaModalProduct(product)
+            }}
             title="Area calculator"
-            className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg border border-amber/40 text-amber-dark dark:text-amber transition-all duration-200 hover:bg-amber/10"
+            className={`shrink-0 h-8 w-8 flex items-center justify-center rounded-lg border border-amber/40 text-amber-dark dark:text-amber transition-all duration-200 hover:bg-amber/10 ${selectedResultKey === `${resultKey}-area` ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card' : ''}`}
           >
             <Icon name="chart" className="h-3.5 w-3.5" />
           </button>
@@ -521,6 +551,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
                 key={t.id}
                 type="button"
                 data-pos-tab
+                aria-pressed={tab === t.id}
                 onClick={() => setTab(t.id)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-all duration-200 ${
                   tab === t.id ? 'bg-amber text-ink dark:text-dark-text shadow-[0_4px_12px_-4px_rgba(232,163,61,0.5)]' : 'text-ink-muted dark:text-dark-muted hover:bg-paper-dim dark:hover:bg-dark-card2'
