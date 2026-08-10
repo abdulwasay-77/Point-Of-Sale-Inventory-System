@@ -134,7 +134,7 @@ export default function UnitsOfMeasurePage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Units of Measure"
         subtitle="Define how products are counted or measured — Piece, Box, Kg, whatever this business actually sells by."

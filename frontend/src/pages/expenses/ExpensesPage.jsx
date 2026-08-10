@@ -59,7 +59,7 @@ export default function ExpensesPage() {
   const [tab, setTab] = useState(() => (canRecordOwn ? 'record' : canManage ? 'budget' : 'my-history'))
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Staff Expenses"
         subtitle="Log day-to-day staff spend against the shared expense budget, and keep a clean history of every deduction."

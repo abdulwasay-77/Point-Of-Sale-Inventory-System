@@ -120,7 +120,7 @@ export default function CustomerPurchasesPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title={customer ? `${customer.name}'s Purchases` : 'Purchase History'}
         subtitle="Every sale on record for this customer."

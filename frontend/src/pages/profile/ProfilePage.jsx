@@ -120,7 +120,7 @@ export default function ProfilePage() {
   if (isLoading) return <Loading message="Loading your profile…" />
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="My Profile" subtitle="Your account, personal details, and preferences." />
 
       {error && <p className="text-sm text-rose dark:text-dark-rose bg-rose-light dark:bg-dark-rose/15 rounded-lg px-3 py-2 mb-4">{error}</p>}

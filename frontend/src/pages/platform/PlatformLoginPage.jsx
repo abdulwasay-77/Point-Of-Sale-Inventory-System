@@ -51,7 +51,7 @@ export default function PlatformLoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-ink relative auth-ambient px-4">
+    <div data-keyboard-scope className="min-h-screen flex items-center justify-center bg-ink relative auth-ambient px-4">
       <button
         type="button"
         onClick={toggleTheme}

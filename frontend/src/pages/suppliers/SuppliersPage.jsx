@@ -124,7 +124,7 @@ export default function SuppliersPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Suppliers"
         subtitle="Manage the vendors you purchase stock from."
@@ -431,5 +431,4 @@ function SupplierLedgerModal({ isOpen, onClose, supplier }) {
     </Modal>
   )
 }
-
 

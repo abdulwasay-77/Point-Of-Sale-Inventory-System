@@ -198,7 +198,7 @@ export default function UserManagementPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Users & Roles"
         subtitle="Manage staff accounts, base roles, and per-user permission overrides."
@@ -908,5 +908,4 @@ function RoleFormModal({ isOpen, onClose, onSave, role, onError }) {
     </Modal>
   )
 }
-
 

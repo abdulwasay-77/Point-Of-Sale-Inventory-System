@@ -110,7 +110,7 @@ export default function CategoriesPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Categories"
         subtitle="Group products so they're easier to find and report on."
@@ -329,5 +329,4 @@ function CategoryFormModal({ isOpen, onClose, onSave, initialValues }) {
     </Modal>
   )
 }
-
 

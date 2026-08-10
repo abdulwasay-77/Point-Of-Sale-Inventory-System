@@ -205,7 +205,7 @@ export default function PayrollPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Payroll"
         subtitle="Employee HR records, base salary + commission, and generated pay runs."

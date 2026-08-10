@@ -100,7 +100,7 @@ export default function VariationsPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Variations"
         subtitle="Define reusable variation types — Color, Diameter, Length — once, then attach them to any product."

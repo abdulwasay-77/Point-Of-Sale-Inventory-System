@@ -109,7 +109,7 @@ export default function ReportDetailPage() {
   const summary = data ? definition.summary(data) : []
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title={definition.label}
         subtitle={definition.description}

@@ -97,7 +97,7 @@ export default function KitsPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title="Kits & Bundles"
         subtitle="Sell multi-part sets (e.g. a gift basket or starter kit) as one line — components deduct from stock automatically."

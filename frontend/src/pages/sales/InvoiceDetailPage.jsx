@@ -85,7 +85,7 @@ export default function InvoiceDetailPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader
         title={`Invoice ${invoice.invoiceNumber}`}
         subtitle="Full details for this sale."

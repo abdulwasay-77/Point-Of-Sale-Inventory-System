@@ -41,7 +41,7 @@ export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState(location.state?.tab || 'today')
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Reports" subtitle="Sales, inventory, and customer reports — plus PDF exports." />
 
       <div className="flex flex-wrap gap-2 mb-5 sm:mb-6">

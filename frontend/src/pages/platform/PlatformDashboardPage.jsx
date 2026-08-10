@@ -108,7 +108,7 @@ export default function PlatformDashboardPage() {
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   return (
-    <div className="min-h-screen bg-paper dark:bg-dark-surface">
+    <div data-keyboard-scope className="min-h-screen bg-paper dark:bg-dark-surface">
       <header className="border-b border-line dark:border-dark-border bg-white dark:bg-dark-card px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="hidden sm:block w-1 h-9 rounded-full bg-gradient-to-b from-amber to-amber-dark shrink-0" />

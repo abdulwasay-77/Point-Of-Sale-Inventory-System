@@ -63,7 +63,7 @@ export default function InstallmentsPage() {
   }
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Installments" subtitle="Plans created at checkout, and the schedule for each one." />
 
       {error && <p className="text-sm text-rose dark:text-dark-rose bg-rose-light dark:bg-dark-rose/15 rounded-lg px-3 py-2 mb-4">{error}</p>}

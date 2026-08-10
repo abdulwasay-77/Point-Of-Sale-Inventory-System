@@ -33,7 +33,7 @@ export default function WarehousesPage() {
   ]
 
   return (
-    <div>
+    <div data-keyboard-scope>
       <PageHeader title="Warehouses & Transfers" subtitle="Manage store locations and move stock between them." />
 
       <div className="flex gap-1 border-b border-line dark:border-dark-border mb-5">
@@ -392,5 +392,4 @@ function TransfersTab() {
     </div>
   )
 }
-
 

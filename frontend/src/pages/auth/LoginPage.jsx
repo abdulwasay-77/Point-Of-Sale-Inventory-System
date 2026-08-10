@@ -66,7 +66,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="w-full max-w-md">
+    <div data-keyboard-scope className="w-full max-w-md">
       {/* Receipt-style card — the login "ticket" into the store */}
       <div className="receipt-panel auth-card-in px-8 pt-8 pb-10">
         <div className="flex flex-col items-center text-center mb-8">

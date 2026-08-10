@@ -140,7 +140,7 @@ export default function BarcodeLabelsPage() {
   }, [selectedProducts, selected])
 
   return (
-    <div className="dashboard-ambient overflow-x-hidden flex flex-col lg:h-full lg:overflow-y-hidden">
+    <div data-keyboard-scope className="dashboard-ambient overflow-x-hidden flex flex-col lg:h-full lg:overflow-y-hidden">
       <div className="shrink-0">
         <PageHeader title="Barcode Labels" subtitle="Select products, choose how many copies, then print a sheet of labels." />
       </div>

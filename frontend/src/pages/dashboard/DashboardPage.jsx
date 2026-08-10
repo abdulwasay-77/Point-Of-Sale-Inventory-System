@@ -58,7 +58,7 @@ export default function DashboardPage() {
   if (isLoading || !summary) return <Loading fullScreen message="Loading dashboard…" />
 
   return (
-    <div className="dashboard-ambient">
+    <div data-keyboard-scope className="dashboard-ambient">
       <PageHeader
         title={`Welcome back, ${user?.name?.split(' ')[0] || 'there'}`}
         subtitle="Here's how the store is doing today."
