@@ -151,7 +151,7 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
       : `Select batch — ${product?.name || ''}`
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm" keyboardNavigation initialFocusSelector={'input[type="radio"]:not([disabled])'}>
       {/* max-height + its own scroll live directly on this div — same
           approach as AreaToBoxModal — so it bounds independently of the
           footer below. The footer is a plain sibling underneath, so
@@ -188,6 +188,7 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
                       <div className="flex items-center gap-2.5">
                         <input
                           type="radio"
+                          autoFocus={variant.id === variants[0]?.id}
                           name="variant"
                           checked={isSelected}
                           onChange={() => {
@@ -247,6 +248,7 @@ export default function VariantBatchSelectorModal({ isOpen, onClose, product, in
                       <div className="flex items-center gap-2.5">
                         <input
                           type="radio"
+                          autoFocus={batch.id === batches[0]?.id}
                           name="batch"
                           checked={isSelected}
                           onChange={() => {

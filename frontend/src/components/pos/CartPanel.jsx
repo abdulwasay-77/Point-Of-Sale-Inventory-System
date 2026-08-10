@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from '../common/Icon'
 import EmptyState from '../common/EmptyState'
 import ConfirmDialog from '../common/ConfirmDialog'
@@ -51,6 +51,10 @@ export default function CartPanel({
   const [dueDate, setDueDate] = useState('')
   const [installmentCount, setInstallmentCount] = useState('4')
   const [frequencyDays, setFrequencyDays] = useState('30')
+  const paidAmountInputRef = useRef(null)
+  const customerSelectRef = useRef(null)
+  const paymentMethodSelectRef = useRef(null)
+  const [selectedLineId, setSelectedLineId] = useState(null)
 
   useEffect(() => {
     customerService
@@ -80,6 +84,13 @@ export default function CartPanel({
     }
   }, [items.length])
 
+  // Quantity shortcuts only ever affect a cart row the cashier has already
+  // focused. This avoids silently changing an arbitrary line after a cart
+  // update or while the cashier is editing a form field.
+  useEffect(() => {
+    setSelectedLineId((currentLineId) => (items.some((item) => item.lineId === currentLineId) ? currentLineId : null))
+  }, [items])
+
   const paidNumber = Number(paidAmount) || 0
   const returnAmount = Math.max(paidNumber - total, 0)
   const shortfall = Math.max(total - paidNumber, 0)
@@ -88,8 +99,17 @@ export default function CartPanel({
   // are what unlock a partial payment in the first place.
   const isInsufficient = items.length > 0 && shortfall > 0.001 && saleMode === 'FULL'
   const needsCustomerForMode = saleMode !== 'FULL' && !customer
+  const canCheckout =
+    items.length > 0 &&
+    !isCheckingOut &&
+    !isInsufficient &&
+    !needsCustomerForMode &&
+    !(saleMode === 'CREDIT' && shortfall > 0.001 && !dueDate)
 
-  function handleCheckoutClick() {
+  const handleCheckoutClick = useCallback(() => {
+    // The keyboard path uses this same guard and existing checkout action,
+    // so it cannot bypass any payment or customer validation.
+    if (!canCheckout) return
     const payload = { paymentMethod, amountPaid: paidNumber }
     if (saleMode === 'CREDIT' && shortfall > 0.001) {
       payload.dueDate = dueDate
@@ -101,10 +121,61 @@ export default function CartPanel({
       }
     }
     onCheckout(payload)
-  }
+  }, [canCheckout, dueDate, frequencyDays, installmentCount, paidNumber, paymentMethod, saleMode, shortfall, onCheckout])
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      // A modal owns keyboard interaction while it is open.
+      if (globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) return
+
+      if (event.key === 'F6' && items.length > 0) {
+        event.preventDefault()
+        paidAmountInputRef.current?.focus()
+        paidAmountInputRef.current?.select()
+      }
+
+      if (event.key === 'F3') {
+        event.preventDefault()
+        customerSelectRef.current?.focus()
+      }
+
+      if (event.key === 'F4') {
+        event.preventDefault()
+        paymentMethodSelectRef.current?.focus()
+      }
+
+      if (event.key === 'F7' && items.length > 0) {
+        event.preventDefault()
+        setIsEmptyCartConfirmOpen(true)
+      }
+
+      if (event.key === 'F8') {
+        event.preventDefault()
+        handleCheckoutClick()
+      }
+
+      const target = event.target
+      const isEditingField = target?.matches?.('input, textarea, select, [contenteditable="true"]')
+      const focusedLineId = target?.closest?.('[data-cart-line-id]')?.dataset.cartLineId
+      const selectedItem = items.find((item) => item.lineId === selectedLineId)
+      if (!event.ctrlKey || isEditingField || !selectedItem || focusedLineId !== selectedLineId) return
+
+      if (event.key === 'ArrowUp' && selectedItem.quantity < selectedItem.stock) {
+        event.preventDefault()
+        onUpdateQuantity(selectedItem.lineId, selectedItem.quantity + 1)
+      }
+      if (event.key === 'ArrowDown' && selectedItem.quantity > 1) {
+        event.preventDefault()
+        onUpdateQuantity(selectedItem.lineId, selectedItem.quantity - 1)
+      }
+    }
+
+    globalThis.document.addEventListener('keydown', handleKeyDown)
+    return () => globalThis.document.removeEventListener('keydown', handleKeyDown)
+  }, [handleCheckoutClick, items, onUpdateQuantity, selectedLineId])
 
   return (
-    <div className="receipt-panel card-premium glow-amber flex flex-col h-full min-h-0">
+    <div data-pos-navigation-group="cart" className="receipt-panel card-premium glow-amber flex flex-col h-full min-h-0">
       <div className="px-5 pt-5 pb-4 border-b border-dashed border-line dark:border-dark-border shrink-0">
         <div className="flex items-center gap-2">
           <span className="section-icon rounded-lg bg-amber-light dark:bg-amber/15 text-amber-dark dark:text-amber">
@@ -134,6 +205,7 @@ export default function CartPanel({
             Customer
           </label>
           <select
+            ref={customerSelectRef}
             id="pos-customer"
             className="input-field"
             value={customer?.id || ''}
@@ -165,7 +237,14 @@ export default function CartPanel({
           ) : (
             <ul className="divide-y divide-line/70 dark:divide-dark-border/70">
               {items.map((item) => (
-                <li key={item.lineId} className="group py-3 -mx-2 px-2 rounded-lg transition-colors duration-200 hover:bg-amber-light/30 dark:hover:bg-amber/15">
+                <li
+                  key={item.lineId}
+                  data-cart-line-id={item.lineId}
+                  onFocusCapture={() => setSelectedLineId(item.lineId)}
+                  className={`group py-3 -mx-2 px-2 rounded-lg transition-colors duration-200 hover:bg-amber-light/30 dark:hover:bg-amber/15 ${
+                    selectedLineId === item.lineId ? 'ring-1 ring-amber/50 bg-amber-light/20 dark:bg-amber/10' : ''
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-ink dark:text-dark-text truncate">
@@ -279,6 +358,7 @@ export default function CartPanel({
               Payment Method
             </label>
             <select
+              ref={paymentMethodSelectRef}
               id="pos-payment-method"
               className="input-field"
               value={paymentMethod}
@@ -321,6 +401,7 @@ export default function CartPanel({
               Paid Amount
             </label>
             <input
+              ref={paidAmountInputRef}
               id="pos-paid-amount"
               type="number"
               inputMode="decimal"
@@ -432,16 +513,18 @@ export default function CartPanel({
             type="button"
             className="btn-accent w-full transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-8px_rgba(232,163,61,0.55)] disabled:hover:translate-y-0 disabled:hover:shadow-none"
             disabled={
-              items.length === 0 ||
-              isCheckingOut ||
-              isInsufficient ||
-              needsCustomerForMode ||
-              (saleMode === 'CREDIT' && shortfall > 0.001 && !dueDate)
+              !canCheckout
             }
             onClick={handleCheckoutClick}
           >
             {isCheckingOut ? 'Processing…' : 'Checkout'}
           </button>
+          <p className="mt-2 text-center text-xs text-ink-muted dark:text-dark-muted">
+            Keyboard: <kbd className="font-medium">F3</kbd> customer · <kbd className="font-medium">F4</kbd> payment · <kbd className="font-medium">F6</kbd> paid amount · <kbd className="font-medium">F7</kbd> empty cart · <kbd className="font-medium">F8</kbd> checkout
+          </p>
+          <p className="mt-1 text-center text-xs text-ink-muted dark:text-dark-muted">
+            Focus a cart line, then use <kbd className="font-medium">Ctrl+↑</kbd>/<kbd className="font-medium">Ctrl+↓</kbd> to change its quantity.
+          </p>
         </div>
       </div>
 
@@ -452,6 +535,7 @@ export default function CartPanel({
         title="Empty the cart?"
         message="This removes every item from the current sale."
         confirmLabel="Empty Cart"
+        keyboardNavigation
       />
     </div>
   )

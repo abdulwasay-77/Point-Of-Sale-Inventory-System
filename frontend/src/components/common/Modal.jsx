@@ -34,9 +34,10 @@ import { onApiError } from '../../utils/errorBus'
  * Modal always covers the full screen regardless of where it's opened
  * from.
  */
-export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
+export default function Modal({ isOpen, onClose, title, children, size = 'md', keyboardNavigation = false, initialFocusSelector }) {
   const [isPulsing, setIsPulsing] = useState(false)
   const pulseTimeoutRef = useRef(null)
+  const panelRef = useRef(null)
 
   // Close on Escape key for keyboard accessibility.
   useEffect(() => {
@@ -46,6 +47,79 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
     if (isOpen) document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
+
+  // POS opts into this behavior for its transaction dialogs. It keeps focus
+  // inside the active dialog, while standard radio/select/range controls
+  // retain their browser Arrow-key behavior.
+  useEffect(() => {
+    if (!isOpen || !keyboardNavigation) return undefined
+
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const focusInitialControl = () => {
+      const panel = panelRef.current
+      if (!panel) return
+      const initial = initialFocusSelector ? panel.querySelector(initialFocusSelector) : null
+      const first = panel.querySelector(focusableSelector)
+      ;(initial || first)?.focus()
+    }
+    const frameId = globalThis.requestAnimationFrame(focusInitialControl)
+
+    function trapTab(event) {
+      const controls = Array.from(panelRef.current?.querySelectorAll(focusableSelector) || [])
+      if (controls.length === 0) return
+      const target = event.target
+
+      const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+      const direction = directions[event.key]
+      if (direction && !target?.matches?.('input, textarea, select, [contenteditable="true"]')) {
+        const current = target?.closest?.(focusableSelector)
+        if (!current) return
+        const currentRect = current.getBoundingClientRect()
+        const currentX = currentRect.left + currentRect.width / 2
+        const currentY = currentRect.top + currentRect.height / 2
+        const horizontal = direction === 'left' || direction === 'right'
+        const next = controls
+          .filter((control) => control !== current)
+          .map((control) => {
+            const rect = control.getBoundingClientRect()
+            const dx = rect.left + rect.width / 2 - currentX
+            const dy = rect.top + rect.height / 2 - currentY
+            const matchesDirection =
+              (direction === 'left' && dx < -1) ||
+              (direction === 'right' && dx > 1) ||
+              (direction === 'up' && dy < -1) ||
+              (direction === 'down' && dy > 1)
+            return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
+          })
+          .filter((candidate) => candidate.matchesDirection)
+          .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]?.control
+
+        if (next) {
+          event.preventDefault()
+          next.focus({ preventScroll: true })
+          next.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }
+        return
+      }
+
+      if (event.key !== 'Tab') return
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (event.shiftKey && globalThis.document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && globalThis.document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    globalThis.document.addEventListener('keydown', trapTab)
+    return () => {
+      globalThis.cancelAnimationFrame(frameId)
+      globalThis.document.removeEventListener('keydown', trapTab)
+    }
+  }, [initialFocusSelector, isOpen, keyboardNavigation])
 
   // Quiet red pulse when a backend error fires while this Modal is open
   // — see the file comment above for why this exists alongside (not
@@ -80,6 +154,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         className={`modal-panel relative bg-white dark:bg-dark-card w-full ${sizeClass} max-h-[90vh] overflow-y-auto rounded-2xl border border-line dark:border-dark-border shadow-[0_24px_70px_-18px_rgba(31,36,48,0.45)] dark:shadow-[0_24px_70px_-18px_rgba(0,0,0,0.7)] ${
           isPulsing ? 'modal-panel-shake ring-2 ring-rose dark:ring-dark-rose' : ''
         }`}

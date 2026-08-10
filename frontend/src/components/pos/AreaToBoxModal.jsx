@@ -48,7 +48,7 @@ export default function AreaToBoxModal({ isOpen, onClose, product, onConfirm }) 
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Area calculator — ${product?.name || ''}`} size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={`Area calculator — ${product?.name || ''}`} size="sm" keyboardNavigation initialFocusSelector="#calc-length">
       {/* max-height + overflow-y-auto live directly on THIS div (not on a
           flex wrapper around it) — that's what actually bounds it and
           makes it scroll on its own, independent of the footer below.

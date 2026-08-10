@@ -2,7 +2,7 @@
  * Reusable search input with a magnifier icon.
  * Used in the navbar, product tables, POS search, and sales history.
  */
-export default function SearchInput({ value, onChange, placeholder = 'Search…', className = '' }) {
+export default function SearchInput({ value, onChange, placeholder = 'Search…', className = '', inputRef }) {
   return (
     <div className={`relative ${className}`}>
       <svg
@@ -20,6 +20,7 @@ export default function SearchInput({ value, onChange, placeholder = 'Search…'
         />
       </svg>
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}

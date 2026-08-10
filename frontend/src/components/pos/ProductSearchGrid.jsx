@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import SearchInput from '../common/SearchInput'
 import EmptyState from '../common/EmptyState'
 import Loading from '../common/Loading'
@@ -86,6 +86,8 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
   const [pickerProduct, setPickerProduct] = useState(null)
   const [pickerInitialQty, setPickerInitialQty] = useState(1)
   const [areaModalProduct, setAreaModalProduct] = useState(null)
+  const [selectedResultKey, setSelectedResultKey] = useState(null)
+  const searchInputRef = useRef(null)
 
   const needsPicker = (product) => product.isBatchTracked || product.isVariantTracked
 
@@ -134,6 +136,103 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
 
   useBarcodeScanner(handleScan, { enabled: true })
 
+  // Arrow navigation follows the rendered button positions rather than an
+  // assumed number of grid columns, so it remains correct for responsive
+  // card, grid, and list views.
+  useEffect(() => {
+    function focusResult(button) {
+      if (!button) return
+      setSelectedResultKey(button.dataset.posResultKey)
+      button.focus({ preventScroll: true })
+      button.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+
+    function moveResult(direction) {
+      const panel = globalThis.document.querySelector('[data-pos-product-panel]')
+      const buttons = Array.from(panel?.querySelectorAll('[data-pos-result-key]:not([disabled])') || [])
+      if (buttons.length === 0) return
+
+      const active = globalThis.document.activeElement
+      const currentIndex = buttons.findIndex((button) => button === active || button.dataset.posResultKey === selectedResultKey)
+      const current = buttons[currentIndex]
+      if (!current) {
+        focusResult(buttons[0])
+        return
+      }
+
+      const currentRect = current.getBoundingClientRect()
+      const currentX = currentRect.left + currentRect.width / 2
+      const currentY = currentRect.top + currentRect.height / 2
+      const candidates = buttons
+        .filter((button) => button !== current)
+        .map((button) => {
+          const rect = button.getBoundingClientRect()
+          const x = rect.left + rect.width / 2
+          const y = rect.top + rect.height / 2
+          const dx = x - currentX
+          const dy = y - currentY
+          const horizontal = direction === 'left' || direction === 'right'
+          const isInDirection =
+            (direction === 'left' && dx < -1) ||
+            (direction === 'right' && dx > 1) ||
+            (direction === 'up' && dy < -1) ||
+            (direction === 'down' && dy > 1)
+          return { button, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), isInDirection }
+        })
+        .filter((candidate) => candidate.isInDirection)
+        .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)
+
+      // In a single-column list (and at the edge of a responsive grid),
+      // Left/Right still have a predictable next/previous result.
+      const linearOffset = direction === 'left' || direction === 'up' ? -1 : 1
+      const linearFallback = buttons[currentIndex + linearOffset]
+      focusResult(candidates[0]?.button || linearFallback || current)
+    }
+
+    function handleKeyDown(event) {
+      if (globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) return
+
+      if (event.key === 'F2') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+      }
+
+      // These are modifier shortcuts rather than plain number keys so they
+      // can never interfere with SKU, name, or barcode entry.
+      if (event.altKey && event.key === '1') {
+        event.preventDefault()
+        setTab('products')
+      }
+      if (event.altKey && event.key === '2') {
+        event.preventDefault()
+        setTab('kits')
+      }
+
+      const target = event.target
+      const isSearch = target === searchInputRef.current
+      const isResultButton = target?.closest?.('[data-pos-result-key]')
+      if (!isSearch && !isResultButton) return
+
+      const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+      if (directions[event.key]) {
+        event.preventDefault()
+        moveResult(directions[event.key])
+      }
+
+      if (event.key === 'Enter' && isSearch && selectedResultKey) {
+        const result = globalThis.document.querySelector(`[data-pos-result-key="${selectedResultKey}"]`)
+        if (result && !result.disabled) {
+          event.preventDefault()
+          result.click()
+        }
+      }
+    }
+
+    globalThis.document.addEventListener('keydown', handleKeyDown)
+    return () => globalThis.document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedResultKey])
+
   const categories = useMemo(() => {
     const names = new Set(products.map((p) => p.category).filter(Boolean))
     return ['all', ...Array.from(names).sort()]
@@ -153,13 +252,17 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
     [kits, query],
   )
 
+  useEffect(() => {
+    setSelectedResultKey(null)
+  }, [tab, query, activeCategory])
+
   const isGrid = viewMode === 'grid'
   const isList = viewMode === 'list'
   const tileGridClass = isGrid
     ? 'grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2'
     : 'grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3'
 
-  function renderProductTile(product) {
+  function renderProductTile(product, resultKey) {
     const outOfStock = product.stock <= 0
     return (
       <div
@@ -168,9 +271,14 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       >
         <button
           type="button"
+          data-pos-result-key={resultKey}
           disabled={outOfStock}
-          onClick={() => handleProductClick(product)}
-          className="w-full text-left disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setSelectedResultKey(resultKey)
+            handleProductClick(product)
+          }}
+          aria-current={selectedResultKey === resultKey ? 'true' : undefined}
+          className={`w-full text-left disabled:opacity-40 disabled:cursor-not-allowed ${selectedResultKey === resultKey ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card rounded-lg' : ''}`}
         >
           <div
             className={`${isGrid ? 'h-11' : 'h-16'} w-full rounded-lg bg-paper-dim dark:bg-dark-card2 border border-line dark:border-dark-border flex items-center justify-center mb-2 relative overflow-hidden`}
@@ -224,7 +332,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
     )
   }
 
-  function renderProductRow(product) {
+  function renderProductRow(product, resultKey) {
     const outOfStock = product.stock <= 0
     return (
       <div
@@ -235,9 +343,14 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
       >
         <button
           type="button"
+          data-pos-result-key={resultKey}
           disabled={outOfStock}
-          onClick={() => handleProductClick(product)}
-          className="flex-1 min-w-0 flex items-center gap-3 text-left disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setSelectedResultKey(resultKey)
+            handleProductClick(product)
+          }}
+          aria-current={selectedResultKey === resultKey ? 'true' : undefined}
+          className={`flex-1 min-w-0 flex items-center gap-3 text-left disabled:opacity-40 disabled:cursor-not-allowed ${selectedResultKey === resultKey ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card rounded-lg' : ''}`}
         >
           <div className="h-10 w-10 shrink-0 rounded-lg bg-paper-dim dark:bg-dark-card2 border border-line dark:border-dark-border flex items-center justify-center overflow-hidden">
             {product.image ? (
@@ -278,15 +391,20 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
     )
   }
 
-  function renderKitTile(kit) {
+  function renderKitTile(kit, resultKey) {
     const outOfStock = kit.availableQty <= 0
     return (
       <button
         key={kit.id}
         type="button"
+        data-pos-result-key={resultKey}
         disabled={outOfStock}
-        onClick={() => onAddKit(kit)}
-        className={`group text-left card card-premium ${isGrid ? 'p-2' : 'p-3'} disabled:opacity-40 disabled:cursor-not-allowed ${
+        onClick={() => {
+          setSelectedResultKey(resultKey)
+          onAddKit(kit)
+        }}
+        aria-current={selectedResultKey === resultKey ? 'true' : undefined}
+        className={`group text-left card card-premium ${isGrid ? 'p-2' : 'p-3'} disabled:opacity-40 disabled:cursor-not-allowed ${selectedResultKey === resultKey ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card' : ''} ${
           outOfStock ? '' : 'shine-sweep glow-amber'
         }`}
       >
@@ -313,15 +431,20 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
     )
   }
 
-  function renderKitRow(kit) {
+  function renderKitRow(kit, resultKey) {
     const outOfStock = kit.availableQty <= 0
     return (
       <button
         key={kit.id}
         type="button"
+        data-pos-result-key={resultKey}
         disabled={outOfStock}
-        onClick={() => onAddKit(kit)}
-        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg border border-transparent text-left transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed ${
+        onClick={() => {
+          setSelectedResultKey(resultKey)
+          onAddKit(kit)
+        }}
+        aria-current={selectedResultKey === resultKey ? 'true' : undefined}
+        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg border border-transparent text-left transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed ${selectedResultKey === resultKey ? 'ring-2 ring-amber ring-offset-2 dark:ring-offset-dark-card' : ''} ${
           outOfStock ? '' : 'hover:bg-paper-dim dark:hover:bg-dark-card2 hover:border-line dark:hover:border-dark-border'
         }`}
       >
@@ -344,7 +467,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
   }
 
   return (
-    <div className="card card-premium glow-amber flex flex-col h-full min-h-0">
+    <div data-pos-product-panel data-pos-navigation-group="products" className="card card-premium glow-amber flex flex-col h-full min-h-0">
       <div className="p-4 border-b border-line dark:border-dark-border space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-1">
@@ -386,6 +509,7 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
         </div>
         <div className="flex items-center gap-2">
           <SearchInput
+            inputRef={searchInputRef}
             value={query}
             onChange={setQuery}
             placeholder={tab === 'products' ? 'Search product by name or SKU…' : 'Search bundles…'}
@@ -400,6 +524,9 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
             </span>
           )}
         </div>
+        <p className="text-xs text-ink-muted dark:text-dark-muted">
+          Keyboard: <kbd className="font-medium">F2</kbd> search · <kbd className="font-medium">Alt+1</kbd> products · <kbd className="font-medium">Alt+2</kbd> bundles · <kbd className="font-medium">Arrow keys</kbd> select · <kbd className="font-medium">Enter</kbd> add.
+        </p>
         {tab === 'products' && categories.length > 2 && (
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide -mx-1 px-1">
             {categories.map((cat) => (
@@ -432,16 +559,16 @@ export default function ProductSearchGrid({ onAddProduct, onAddKit, customerId }
           filteredProducts.length === 0 ? (
             <EmptyState title="No products match" description="Try a different search term." icon="🔍" />
           ) : isList ? (
-            <div className="space-y-1">{filteredProducts.map((product) => renderProductRow(product))}</div>
+            <div className="space-y-1">{filteredProducts.map((product) => renderProductRow(product, `product-${product.id}`))}</div>
           ) : (
-            <div className={tileGridClass}>{filteredProducts.map((product) => renderProductTile(product))}</div>
+            <div className={tileGridClass}>{filteredProducts.map((product) => renderProductTile(product, `product-${product.id}`))}</div>
           )
         ) : filteredKits.length === 0 ? (
           <EmptyState title="No bundles found" description="Create one from the Kits & Bundles page." icon="🎁" />
         ) : isList ? (
-          <div className="space-y-1">{filteredKits.map((kit) => renderKitRow(kit))}</div>
+          <div className="space-y-1">{filteredKits.map((kit) => renderKitRow(kit, `kit-${kit.id}`))}</div>
         ) : (
-          <div className={tileGridClass}>{filteredKits.map((kit) => renderKitTile(kit))}</div>
+          <div className={tileGridClass}>{filteredKits.map((kit) => renderKitTile(kit, `kit-${kit.id}`))}</div>
         )}
       </div>
 

@@ -120,6 +120,28 @@ The Inventory page provides available stock and low-stock views. Reorder thresho
 
 Open **POS** and find products through search, SKU/barcode lookup, or a keyboard-mode USB/Bluetooth barcode scanner. Add a product, variant, selected batch, or kit to the cart. The cart supports line-level quantity and discount changes; default product discounts are applied initially. Eligible wholesale/contractor customers receive their wholesale pricing flow.
 
+#### POS keyboard controls
+
+The POS can also be operated without the mouse for the main cashier flow. These shortcuts are available only on the POS screen:
+
+| Key | Action |
+| --- | --- |
+| `F2` | Focus and select the product/bundle search field. |
+| `Alt+1` | Switch to the Products tab. |
+| `Alt+2` | Switch to the Bundles tab. |
+| `Left` / `Right` / `Up` / `Down` | Move through visible POS cards and action buttons by screen position. From the search field or a product/bundle card, moves the highlighted result. |
+| `Tab` | Move through the visible POS controls and product buttons. |
+| `Enter` / `Space` | Add the highlighted product/bundle or activate the focused POS control. |
+| `F3` | Focus the customer selector. |
+| `F4` | Focus the payment-method selector. |
+| `F6` | Focus and select the paid amount field. |
+| `F7` | Open the Empty Cart confirmation when the cart has items. |
+| `F8` | Run checkout using the same validation and action as the Checkout button. |
+| `Ctrl+Up` / `Ctrl+Down` | Increase/decrease the currently focused cart line's quantity. |
+| `Esc` | Close the active POS dialog. |
+
+For cart quantity shortcuts, first focus any control on the intended cart line. Shortcuts do not operate through an open dialog, preventing accidental actions behind batch/variant selectors, confirmations, or the completed-sale receipt. POS dialogs retain keyboard focus: use `Tab`/`Shift+Tab` to move through their fields and actions, `Arrow` keys for radio groups, select fields, and calculator range controls, `Enter`/`Space` to activate the focused action, and `Esc` to close. Barcode scanner support continues to work independently: scan a barcode as normal and the matched product is added to the cart.
+
 At checkout, select a customer (or the walk-in customer), payment method, and tendered amount as needed. Available payment methods are Cash, Card, UPI, Bank Transfer, and Credit. Checkout performs its related records as one business operation:
 
 1. validates product/variant/batch/kit availability;

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ProductSearchGrid from '../../components/pos/ProductSearchGrid'
 import CartPanel from '../../components/pos/CartPanel'
@@ -100,8 +100,69 @@ export default function PosPage() {
     }
   }
 
+  // Product cards have their own result-aware arrow navigation. This covers
+  // every other POS button (tabs, view/category controls, cart actions,
+  // quantity/discount controls, and receipt actions) by moving to the
+  // nearest visible control in the requested screen direction. Inputs,
+  // selects, range controls, and all open dialogs retain their native keys.
+  useEffect(() => {
+    function getDirectionalCandidate(controls, current, direction) {
+      const currentRect = current.getBoundingClientRect()
+      const currentX = currentRect.left + currentRect.width / 2
+      const currentY = currentRect.top + currentRect.height / 2
+      const horizontal = direction === 'left' || direction === 'right'
+
+      return controls
+        .filter((control) => control !== current)
+        .map((control) => {
+          const rect = control.getBoundingClientRect()
+          const x = rect.left + rect.width / 2
+          const y = rect.top + rect.height / 2
+          const dx = x - currentX
+          const dy = y - currentY
+          const matchesDirection =
+            (direction === 'left' && dx < -1) ||
+            (direction === 'right' && dx > 1) ||
+            (direction === 'up' && dy < -1) ||
+            (direction === 'down' && dy > 1)
+          return { control, primary: Math.abs(horizontal ? dx : dy), secondary: Math.abs(horizontal ? dy : dx), matchesDirection }
+        })
+        .filter((candidate) => candidate.matchesDirection)
+        .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary)[0]?.control
+    }
+
+    function handleArrowNavigation(event) {
+      if (event.defaultPrevented || globalThis.document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      const directions = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
+      const direction = directions[event.key]
+      if (!direction || event.ctrlKey || event.altKey || event.metaKey) return
+
+      const target = event.target
+      if (target?.matches?.('input, textarea, select, [contenteditable="true"]')) return
+      // Product results use ProductSearchGrid's dedicated grid/list handler.
+      if (target?.closest?.('[data-pos-result-key]')) return
+
+      const posRoot = globalThis.document.querySelector('[data-pos-navigation-root]')
+      const current = target?.closest?.('button:not([disabled])')
+      if (!posRoot || !current || !posRoot.contains(current)) return
+
+      const controls = Array.from(posRoot.querySelectorAll('[data-pos-navigation-group] button:not([disabled])'))
+      const currentGroup = current.closest('[data-pos-navigation-group]')
+      const sameGroup = controls.filter((control) => control.closest('[data-pos-navigation-group]') === currentGroup)
+      const next = getDirectionalCandidate(sameGroup, current, direction) || getDirectionalCandidate(controls, current, direction)
+      if (!next) return
+
+      event.preventDefault()
+      next.focus({ preventScroll: true })
+      next.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+
+    globalThis.document.addEventListener('keydown', handleArrowNavigation)
+    return () => globalThis.document.removeEventListener('keydown', handleArrowNavigation)
+  }, [])
+
   return (
-    <div className="h-full flex flex-col">
+    <div data-pos-navigation-root className="h-full flex flex-col">
       <div className="relative z-10 mb-4 flex items-start gap-3">
         <span className="hidden sm:block w-1 h-9 rounded-full bg-gradient-to-b from-amber to-amber-dark mt-0.5 shrink-0" />
         <div>
@@ -175,6 +236,8 @@ export default function PosPage() {
               : 'Sale Complete'
         }
         size="sm"
+        keyboardNavigation
+        initialFocusSelector={'[data-pos-receipt-action="print"]'}
       >
         {invoice && (
           <>
@@ -182,6 +245,7 @@ export default function PosPage() {
             <div className="flex gap-3 mt-6">
               <button
                 type="button"
+                data-pos-receipt-action="print"
                 className="btn-outline flex-1 transition-all duration-200 hover:-translate-y-0.5"
                 onClick={() => printReceiptElement('receipt-print-area')}
               >

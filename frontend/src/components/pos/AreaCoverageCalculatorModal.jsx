@@ -21,7 +21,7 @@ export default function AreaCoverageCalculatorModal({ isOpen, onClose, product, 
   const areaUnit = product?.coverageUomAbbreviation || product?.coverageUom || 'area units'
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Area calculator — ${product?.name || ''}`} size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={`Area calculator — ${product?.name || ''}`} size="sm" keyboardNavigation initialFocusSelector="#required-area">
       <div className="space-y-4">
         <p className="text-sm text-ink-muted dark:text-dark-muted">One {saleUnit} covers {product?.coverageQuantity} {areaUnit}.</p>
         <div>
