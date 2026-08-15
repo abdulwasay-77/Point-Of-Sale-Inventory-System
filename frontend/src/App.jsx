@@ -5,6 +5,7 @@ import AuthLayout from './layouts/AuthLayout'
 import ProtectedRoute from './routes/ProtectedRoute'
 
 import LoginPage from './pages/auth/LoginPage'
+import TenantHandoffPage from './pages/auth/TenantHandoffPage'
 import DashboardPage from './pages/dashboard/DashboardPage'
 import CategoriesPage from './pages/categories/CategoriesPage'
 import VariationsPage from './pages/variations/VariationsPage'
@@ -53,6 +54,12 @@ export default function App() {
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<LoginPage />} />
       </Route>
+
+      {/* Destination of the post-login subdomain redirect (see
+          AuthContext.jsx#maybeRedirectToTenantSubdomain) — renders
+          nothing, just completes the login handoff and redirects on.
+          Deliberately outside AuthLayout: there's nothing to show. */}
+      <Route path="/auth/handoff" element={<TenantHandoffPage />} />
 
       {/* Authenticated routes */}
       <Route

@@ -1,3 +1,5 @@
+
+
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -28,4 +30,15 @@ module.exports = {
   // use at all can simply leave this unset. Never hardcode a domain
   // anywhere else in the codebase; this is the one place it's read.
   appDomain: process.env.APP_DOMAIN || null,
+  // The platform owner's dedicated, fixed subdomain — e.g.
+  // "abdulwasay.owner" so the full address is
+  // "abdulwasay.owner.<APP_DOMAIN>". Unlike business subdomains (any
+  // string, matched dynamically against the Business table via
+  // wildcard DNS), this is ONE specific, chosen value with no
+  // database lookup involved — set once, via env, not created through
+  // any UI. Left unset by default; see middleware/tenantMiddleware.js
+  // for how it's recognized.
+  platformOwnerSubdomain: process.env.PLATFORM_OWNER_SUBDOMAIN || null,
 };
+
+

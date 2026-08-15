@@ -38,14 +38,38 @@ const RESERVED_SUBDOMAINS = new Set(['www', 'api', 'platform', 'app']);
 // subdomain, or plain "localhost" in local dev without any hosts-file
 // entry all fall back to this. That keeps single-tenant/local
 // development working exactly as it did before this middleware existed.
+//
+// req.isPlatformOwnerSubdomain is a separate flag, true only when the
+// hostname exactly matches env.platformOwnerSubdomain + APP_DOMAIN
+// (e.g. "abdulwasay.owner.pos.com"). This is NOT a business — it's a
+// single, fixed, chosen address for the platform owner (see
+// config/env.js), so there's no database lookup, no wildcard DNS
+// requirement, and no interaction with TENANT_MODELS/runWithTenant.
+// It's checked FIRST, before the single-segment business-slug logic
+// below, specifically because "abdulwasay.owner" contains a dot and
+// would otherwise be quietly treated as "not a valid slug" and
+// no-opped by that logic. Nothing currently in the app enforces
+// requests based on this flag (see docs/subdomain-owner-redirect.md
+// for why — the "cosmetic" decision) — it's exposed on the request
+// mainly so a route/frontend could act on it later without needing to
+// re-parse the hostname itself.
 async function tenantMiddleware(req, res, next) {
   try {
     const hostname = req.hostname; // Express strips the port already
 
     req.tenantBusiness = null;
     req.tenantSlug = null;
+    req.isPlatformOwnerSubdomain = false;
 
     if (!hostname || !env.appDomain) {
+      return next();
+    }
+
+    if (
+      env.platformOwnerSubdomain &&
+      hostname === `${env.platformOwnerSubdomain}.${env.appDomain}`
+    ) {
+      req.isPlatformOwnerSubdomain = true;
       return next();
     }
 
@@ -60,7 +84,9 @@ async function tenantMiddleware(req, res, next) {
     const slug = hostname.slice(0, -suffix.length);
 
     // A dotted remainder (e.g. "foo.bar.pos.com") isn't a single valid
-    // slug — treat it as "no tenant" rather than guessing.
+    // business slug — treat it as "no tenant" rather than guessing.
+    // (The owner subdomain, also dotted, was already handled above —
+    // this only catches everything else shaped like it.)
     if (!slug || slug.includes('.') || RESERVED_SUBDOMAINS.has(slug)) {
       return next();
     }

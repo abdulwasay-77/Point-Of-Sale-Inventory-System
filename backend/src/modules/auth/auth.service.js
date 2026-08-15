@@ -129,6 +129,11 @@ class AuthService {
       themePreference: user.theme_preference,
       employeeId: employee ? employee.id : null,
       enabledModules: resolvedBusiness ? resolvedBusiness.enabled_modules : [],
+      // The business's own subdomain slug (e.g. "alimart"), not just its
+      // display name — this is what the frontend compares against the
+      // current URL to decide whether a post-login redirect to
+      // "{slug}.{APP_DOMAIN}" is needed. See AuthContext.jsx.
+      businessSlug: resolvedBusiness ? resolvedBusiness.slug : null,
       permissions,
     };
   }

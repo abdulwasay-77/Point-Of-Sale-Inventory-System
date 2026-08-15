@@ -1,5 +1,6 @@
 import { createContext, useState, useEffect, useCallback, useRef } from 'react'
 import { authService } from '../services/authService'
+import { buildTenantOrigin, needsTenantRedirect } from '../utils/tenantUrl'
 
 export const AuthContext = createContext(null)
 
@@ -8,6 +9,36 @@ export const AuthContext = createContext(null)
 // browser sessions on a screen nobody ever "returns focus" to, like a
 // dedicated POS terminal display).
 const BACKGROUND_REFRESH_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
+
+// If the logged-in user's business has its own subdomain (VITE_APP_DOMAIN
+// configured, businessSlug present on the user object — see
+// auth.service.js#buildUserResponse) and the browser ISN'T already
+// there, send it there. Only fires from an actual login/session-restore
+// event, not on every render or every background refreshUser() call —
+// otherwise a user deliberately viewing a different (e.g. read-only,
+// future use case) subdomain would get yanked away repeatedly.
+//
+// `token`, when provided, is included so the destination subdomain can
+// complete the login itself — see TenantHandoffPage.jsx for why a plain
+// redirect isn't enough (localStorage is per-origin). Session restore
+// (no fresh token in hand, just what's already in THIS origin's
+// localStorage) still redirects the browser, but without a token in
+// the URL — the destination subdomain's own localStorage may already
+// have a valid session from a previous visit; if not, it'll just show
+// its own login page, which is a reasonable fallback for "you saved a
+// bookmark to the wrong address."
+function maybeRedirectToTenantSubdomain(user, token) {
+  if (!user?.businessSlug) return
+  if (window.location.pathname === '/auth/handoff') return
+  if (!needsTenantRedirect(user.businessSlug)) return
+
+  const origin = buildTenantOrigin(user.businessSlug)
+  if (!origin) return
+
+  window.location.href = token
+    ? `${origin}/auth/handoff#token=${encodeURIComponent(token)}`
+    : origin
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -28,7 +59,9 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('pos_token')
     if (storedUser && token) {
       try {
-        setUser(JSON.parse(storedUser))
+        const parsedUser = JSON.parse(storedUser)
+        setUser(parsedUser)
+        maybeRedirectToTenantSubdomain(parsedUser)
       } catch {
         localStorage.removeItem('pos_user')
         localStorage.removeItem('pos_token')
@@ -44,7 +77,25 @@ export function AuthProvider({ children }) {
     localStorage.setItem('pos_token', token)
     localStorage.setItem('pos_user', JSON.stringify(loggedInUser))
     setUser(loggedInUser)
+    maybeRedirectToTenantSubdomain(loggedInUser, token)
     return loggedInUser
+  }
+
+  // Completes login on the DESTINATION side of a subdomain redirect
+  // (see TenantHandoffPage.jsx) — the token already exists (minted by
+  // the original login() call on the bare domain), this just needs to
+  // land it in THIS origin's localStorage and fetch the matching user.
+  // Deliberately does not call maybeRedirectToTenantSubdomain again —
+  // by the time this runs, the app is already on the correct
+  // subdomain, and re-checking here risks a redirect loop if that ever
+  // stops being true for some edge-case reason.
+  const loginWithToken = async (token) => {
+    localStorage.setItem('pos_token', token)
+    const response = await authService.getProfile()
+    const fetchedUser = response.data.data
+    localStorage.setItem('pos_user', JSON.stringify(fetchedUser))
+    setUser(fetchedUser)
+    return fetchedUser
   }
 
   const logout = async () => {
@@ -128,7 +179,7 @@ export function AuthProvider({ children }) {
   }, [isLoading, refreshUser])
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, logout, updateUser, refreshUser }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, loginWithToken, logout, updateUser, refreshUser }}>
       {children}
     </AuthContext.Provider>
   )
