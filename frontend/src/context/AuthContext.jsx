@@ -29,11 +29,37 @@ const BACKGROUND_REFRESH_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 // bookmark to the wrong address."
 function maybeRedirectToTenantSubdomain(user, token) {
   if (!user?.businessSlug) return
-  if (window.location.pathname === '/auth/handoff') return
+
+  const path = window.location.pathname
+
+  if (path === '/auth/handoff') return
+
+  // Platform admin (/platform/login, /platform/dashboard) is a
+  // completely separate login system — see PlatformProtectedRoute.jsx,
+  // which checks its own separate token, not this one. It must never
+  // be affected by a regular business session. Without this check, a
+  // leftover tenant token sitting in THIS origin's localStorage (see
+  // login()/the session-restore effect below, both of which write here
+  // before ever navigating away — see the cleanup a few lines down for
+  // why that copy shouldn't usually still be here) would silently
+  // bounce someone trying to reach the Super Admin console over to
+  // some business's subdomain instead.
+  if (path === '/platform/login' || path.startsWith('/platform/')) return
+
   if (!needsTenantRedirect(user.businessSlug)) return
 
   const origin = buildTenantOrigin(user.businessSlug)
   if (!origin) return
+
+  // This origin's copy of the session has done its job — either handed
+  // off via the URL fragment below (fresh login), or about to be
+  // superseded by whatever the destination subdomain's own storage
+  // already holds (session restore, no token in hand). Clearing it here
+  // stops it from lingering on this origin and re-firing this same
+  // redirect on every future visit here, including unrelated ones like
+  // /platform/login.
+  localStorage.removeItem('pos_token')
+  localStorage.removeItem('pos_user')
 
   window.location.href = token
     ? `${origin}/auth/handoff#token=${encodeURIComponent(token)}`

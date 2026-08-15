@@ -109,7 +109,7 @@ const PERMISSION_CATALOG = [
   { key: PERMISSIONS.BARCODES_MANAGE, label: 'Generate & print barcode labels', group: 'Products', module: 'PRODUCTS' },
   { key: PERMISSIONS.CATEGORIES_MANAGE, label: 'Manage categories', group: 'Products', module: 'PRODUCTS' },
   { key: PERMISSIONS.VARIATIONS_MANAGE, label: 'Manage variations (e.g. Color, Diameter)', group: 'Products', module: 'PRODUCTS' },
-  { key: PERMISSIONS.UNITS_MANAGE, label: 'Manage units of measure', group: 'Products', module: 'PRODUCTS' },
+  { key: PERMISSIONS.UNITS_MANAGE, label: 'Manage units of measure', group: 'Products', module: 'UNITS' },
   { key: PERMISSIONS.INVENTORY_VIEW, label: 'View inventory', group: 'Inventory', module: 'INVENTORY' },
   { key: PERMISSIONS.KITS_MANAGE, label: 'Manage kits & bundles', group: 'Inventory', module: 'KITS' },
   { key: PERMISSIONS.WAREHOUSES_MANAGE, label: 'Manage warehouses', group: 'Inventory', module: 'INVENTORY' },

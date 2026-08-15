@@ -108,6 +108,26 @@ class BusinessService {
         },
       });
 
+      // Seeds BusinessSettings with what was already captured above,
+      // instead of leaving it to be lazily created empty on first visit
+      // to the Settings page (see utils/businessSettings.js#getBusinessSettings).
+      // Without this, a brand-new business's own name/logo never shows up
+      // on its Settings page or its public login page (see
+      // settings.service.js#getPublicSettings) until someone manually
+      // re-types the name a second time. Everything else on
+      // BusinessSettings (currency_symbol, invoice_number_prefix, etc.)
+      // keeps its own schema default — only the two fields we already
+      // have real values for are set here. Unscoped (tx, not the
+      // tenant-scoping `prisma`) since there's no request/tenant context
+      // inside this transaction — business_id is set explicitly instead.
+      await tx.businessSettings.create({
+        data: {
+          business_id: business.id,
+          company_name: name,
+          phone: contactPhone || null,
+        },
+      });
+
       return { business, admin };
     });
 

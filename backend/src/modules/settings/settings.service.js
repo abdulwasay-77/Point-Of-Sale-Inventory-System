@@ -44,14 +44,33 @@ class SettingsService {
 
   // Branding only — safe to expose without auth (see settings.routes.js).
   //
-  // Deliberately does NOT call getBusinessSettings(): this route is hit
-  // before login, on a shared /login page with no subdomain-based tenant
-  // resolution yet — there is no way to know which business's branding
-  // to show. Returns generic app defaults instead of guessing/crashing.
-  // Once subdomain (or slug-based) routing exists, this is the place to
-  // resolve the business from the request and return its real branding.
-  async getPublicSettings() {
-    return { companyName: 'POS & Inventory System', logoUrl: null };
+  // Deliberately does NOT call getBusinessSettings(): that helper requires
+  // an active tenant context (a logged-in request — see utils/
+  // businessSettings.js), and this route is hit before login. `business`
+  // is what tenantMiddleware.js already resolved from the request's
+  // subdomain (req.tenantBusiness) and is null whenever the request has
+  // no recognizable business subdomain (bare domain, local dev without
+  // subdomains configured, etc.) — in that case there's no way to know
+  // which business's branding to show, so this falls back to generic
+  // app defaults exactly as it always has.
+  //
+  // Looked up via basePrisma (unscoped): there is no tenant context yet
+  // at this point in the request, by design — same reasoning as
+  // tenantMiddleware.js's own Business lookup.
+  async getPublicSettings(business) {
+    if (!business) {
+      return { companyName: 'POS & Inventory System', logoUrl: null };
+    }
+
+    const settings = await prisma.basePrisma.businessSettings.findUnique({
+      where: { business_id: business.id },
+      select: { company_name: true, logo_url: true },
+    });
+
+    return {
+      companyName: settings?.company_name?.trim() || business.name || 'POS & Inventory System',
+      logoUrl: settings?.logo_url || null,
+    };
   }
 
   async updateSettings(data, userId) {

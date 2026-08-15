@@ -13,6 +13,7 @@ import { useTheme } from '../../hooks/useTheme'
 
 const ALL_MODULES = {
   PRODUCTS: 'Products & Catalog',
+  UNITS: 'Units of Measure',
   INVENTORY: 'Inventory & Warehouses',
   CONTACTS: 'Customers & Suppliers',
   SALES: 'Point of Sale & Invoices',

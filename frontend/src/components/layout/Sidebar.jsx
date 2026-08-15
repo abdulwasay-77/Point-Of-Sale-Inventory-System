@@ -79,7 +79,7 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
     'Barcode Labels': 'PRODUCTS',
     Categories: 'PRODUCTS',
     Variations: 'PRODUCTS',
-    Units: 'PRODUCTS',
+    Units: 'UNITS',
     Customers: 'CONTACTS',
     Suppliers: 'CONTACTS',
     Purchases: 'PURCHASES',

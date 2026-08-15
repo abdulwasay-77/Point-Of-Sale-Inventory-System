@@ -11,6 +11,7 @@
 // exist for this business at all).
 const MODULES = {
   PRODUCTS: 'Products & Catalog',
+  UNITS: 'Units of Measure',
   INVENTORY: 'Inventory & Warehouses',
   CONTACTS: 'Customers & Suppliers',
   SALES: 'Point of Sale & Invoices',
@@ -31,7 +32,7 @@ const MODULES = {
 const ROUTE_MODULE_MAP = {
   '/api/categories': 'PRODUCTS',
   '/api/variations': 'PRODUCTS',
-  '/api/units-of-measure': 'PRODUCTS',
+  '/api/units-of-measure': 'UNITS',
   '/api/products': 'PRODUCTS',
   '/api/kits': 'KITS',
   '/api/customers': 'CONTACTS',
@@ -51,9 +52,14 @@ const ROUTE_MODULE_MAP = {
 };
 
 // Sensible starting point for a brand-new business — the core loop
-// (catalog, inventory, contacts, POS, reports) plus admin/user
-// management, without the more specialized add-ons. A Super Admin can
-// change this per business at any time from the platform dashboard.
-const DEFAULT_MODULES = ['PRODUCTS', 'INVENTORY', 'CONTACTS', 'SALES', 'PURCHASES', 'REPORTS', 'ADMIN'];
+// (catalog, units, inventory, contacts, POS, reports) plus admin/user
+// management, without the more specialized add-ons. UNITS is included
+// unconditionally alongside PRODUCTS (not treated as optional like the
+// other add-ons): a product literally cannot be created without at
+// least one unit of measure to assign it (see products.service.js),
+// so a business missing this module would be unable to use its
+// catalog at all, trial or not. A Super Admin can still change this
+// per business at any time from the platform dashboard.
+const DEFAULT_MODULES = ['PRODUCTS', 'UNITS', 'INVENTORY', 'CONTACTS', 'SALES', 'PURCHASES', 'REPORTS', 'ADMIN'];
 
 module.exports = { MODULES, ROUTE_MODULE_MAP, DEFAULT_MODULES };
