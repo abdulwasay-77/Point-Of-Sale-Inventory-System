@@ -103,13 +103,6 @@ async function tenantMiddleware(req, res, next) {
       });
     }
 
-    if (business.status === 'SUSPENDED') {
-      return res.status(403).json({
-        success: false,
-        message: 'This business account is not active. Please contact support.',
-      });
-    }
-
     req.tenantBusiness = business;
     req.tenantSlug = slug;
 

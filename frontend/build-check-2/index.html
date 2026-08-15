@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ledger POS | Inventory & Point of Sale</title>
+
+    <!-- Fonts: Space Grotesk (display), Inter (body), JetBrains Mono (numeric/data) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Applies the saved theme (see ThemeContext.jsx, key "pos_theme")
+         to <html> before the app's first paint, on every route — this
+         page previously had no such script, so the app briefly flashed
+         light-mode styling on every load/refresh before React mounted
+         and ThemeProvider's own useEffect caught up. Wrapped in
+         try/catch purely for private-browsing modes that can throw on
+         localStorage access; failing silently just leaves the default
+         light theme, same as before this script existed. -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('pos_theme') === 'DARK') {
+            document.documentElement.classList.add('dark')
+          }
+        } catch (e) {}
+      })()
+    </script>
+    <script type="module" crossorigin src="/assets/index-4fyCk5UL.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DN6A_tIS.css">
+  </head>
+  <body class="bg-paper font-body text-ink">
+    <div id="root"></div>
+  </body>
+</html>

@@ -38,4 +38,5 @@ export const NAV_ITEMS = [
   { label: 'Users', path: '/users', icon: 'users' },
   { label: 'Profile', path: '/profile', icon: 'userCircle' },
   { label: 'Settings', path: '/settings', icon: 'settings' },
+  { label: 'Billing', path: '/billing', icon: 'creditCard' },
 ]

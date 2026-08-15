@@ -35,6 +35,10 @@ const profileRoutes = require('./modules/profile/profile.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
 const platformAuthRoutes = require('./modules/platform/platformAuth.routes');
 const platformBusinessRoutes = require('./modules/platform/business.routes');
+const platformPlansRoutes = require('./modules/platform/plans.routes');
+const platformPayoutMethodsRoutes = require('./modules/platform/payoutMethods.routes');
+const platformPaymentSubmissionsRoutes = require('./modules/platform/paymentSubmissions.routes');
+const billingRoutes = require('./modules/billing/billing.routes');
 
 const app = express();
 
@@ -90,6 +94,7 @@ app.use('/api/credit', creditRoutes);
 app.use('/api/installments', installmentsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/billing', billingRoutes);
 
 // Platform / Super Admin routes — never share a router with the tenant
 // routes above. Authenticated by platformAuthMiddleware.js, a
@@ -98,6 +103,9 @@ app.use('/api/settings', settingsRoutes);
 // platformAuthMiddleware.js, which explicitly rejects tenant tokens).
 app.use('/api/platform/auth', platformAuthRoutes);
 app.use('/api/platform/businesses', platformBusinessRoutes);
+app.use('/api/platform/plans', platformPlansRoutes);
+app.use('/api/platform/payout-methods', platformPayoutMethodsRoutes);
+app.use('/api/platform/payment-submissions', platformPaymentSubmissionsRoutes);
 
 // 404 handler
 app.use((req, res) => {

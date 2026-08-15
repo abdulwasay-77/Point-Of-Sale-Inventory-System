@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar'
 import Navbar from '../components/layout/Navbar'
+import { useAuth } from '../hooks/useAuth'
+import { useSubscriptionStatus } from '../hooks/useSubscriptionStatus'
 
 const SIDEBAR_COLLAPSE_KEY = 'pos_sidebar_collapsed'
 
@@ -24,6 +26,10 @@ const SIDEBAR_COLLAPSE_KEY = 'pos_sidebar_collapsed'
  *    is enough for the content area to reflow, no manual margin needed.
  */
 export default function DashboardLayout() {
+  const { user } = useAuth()
+  const subscription = useSubscriptionStatus()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -33,6 +39,14 @@ export default function DashboardLayout() {
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSE_KEY, String(collapsed))
   }, [collapsed])
+
+  useEffect(() => {
+    if (user?.isPrimaryAdmin && subscription?.status === 'SUSPENDED' && location.pathname !== '/billing') navigate('/billing', { replace: true })
+  }, [location.pathname, navigate, subscription?.status, user?.isPrimaryAdmin])
+
+  if (user?.isPrimaryAdmin && subscription?.status === 'SUSPENDED') {
+    return <main className="min-h-screen bg-paper dark:bg-dark-surface p-4 lg:p-6"><div className="max-w-[900px] mx-auto"><Outlet /></div></main>
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-paper dark:bg-dark-surface">
@@ -45,6 +59,9 @@ export default function DashboardLayout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <Navbar onMenuClick={() => setSidebarOpen(true)} />
+        {user?.isPrimaryAdmin && subscription && ['TRIALING', 'ACTIVE'].includes(subscription.status) && subscription.daysRemaining <= subscription.warningThresholdDays && (
+          <Link to="/billing" className="block bg-amber-500 px-4 py-2 text-center text-sm font-medium text-ink">Your plan expires in {subscription.daysRemaining} day{subscription.daysRemaining === 1 ? '' : 's'}. Review billing options.</Link>
+        )}
         {/* Scrolling now happens here, not on the document. That keeps the
             sidebar permanently in view (it never has to "chase" a page
             scroll) and lets fixed-height pages like POS own their own

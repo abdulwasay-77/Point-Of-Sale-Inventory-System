@@ -83,6 +83,10 @@ const PERMISSIONS = {
   SETTINGS_MANAGE: 'SETTINGS_MANAGE',
   // Chatbot actions (separate from read-only chatbot Q&A, which only needs a login)
   CHATBOT_ACTIONS: 'CHATBOT_ACTIONS',
+  // Billing is core account management rather than a plan-gated product
+  // feature: it must remain available when a suspended business needs to
+  // submit payment to restore its own access.
+  BILLING_MANAGE: 'BILLING_MANAGE',
 };
 
 // Human-readable labels + grouping, used by the frontend to render the
@@ -128,6 +132,7 @@ const PERMISSION_CATALOG = [
   { key: PERMISSIONS.INSTALLMENTS_MANAGE, label: 'Manage installment plans', group: 'Sales', module: 'INSTALLMENTS' },
   { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Manage website settings', group: 'Admin', module: null },
   { key: PERMISSIONS.CHATBOT_ACTIONS, label: 'Let chatbot perform actions', group: 'Admin', module: null },
+  { key: PERMISSIONS.BILLING_MANAGE, label: 'Manage billing & subscription', group: 'Admin', module: null },
   { key: PERMISSIONS.EXPENSES_RECORD, label: 'Record own staff expenses', group: 'Expenses', module: 'EXPENSES' },
   { key: PERMISSIONS.EXPENSES_MANAGE, label: 'Manage expense budget, limits & history', group: 'Expenses', module: 'EXPENSES' },
 ];

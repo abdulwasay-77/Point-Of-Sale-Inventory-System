@@ -46,7 +46,7 @@ class AuthService {
     // no tenant context yet — we're literally in the middle of figuring
     // out which tenant this is.
     const business = await prisma.basePrisma.business.findUnique({ where: { id: user.business_id } });
-    if (!business || business.status === 'SUSPENDED') {
+    if (!business || (business.status === 'SUSPENDED' && !user.is_primary_admin)) {
       throw new Error('This business account is not active. Please contact support.');
     }
 

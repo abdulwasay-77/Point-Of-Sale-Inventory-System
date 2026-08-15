@@ -1,0 +1,3 @@
+const asyncHandler = require('../../utils/asyncHandler'); const { success, created } = require('../../utils/apiResponse'); const service = require('./payoutMethods.service');
+const list = asyncHandler(async (req, res) => success(res, await service.list())); const create = asyncHandler(async (req, res) => created(res, await service.create(req.body), 'Payout method created')); const update = asyncHandler(async (req, res) => success(res, await service.update(req.params.id, req.body), 'Payout method updated')); const deactivate = asyncHandler(async (req, res) => success(res, await service.deactivate(req.params.id), 'Payout method deactivated'));
+module.exports = { list, create, update, deactivate };

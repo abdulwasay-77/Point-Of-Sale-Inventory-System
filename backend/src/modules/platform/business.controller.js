@@ -13,7 +13,7 @@ const getById = asyncHandler(async (req, res) => {
 });
 
 const create = asyncHandler(async (req, res) => {
-  const { name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules } = req.body;
+  const { name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules, planId } = req.body;
   if (!name || !adminName || !adminEmail || !adminPassword) {
     return res.status(400).json({
       success: false,
@@ -21,7 +21,7 @@ const create = asyncHandler(async (req, res) => {
     });
   }
   const result = await BusinessService.createBusiness({
-    name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules,
+    name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules, planId,
   });
   created(res, result, 'Business created');
 });

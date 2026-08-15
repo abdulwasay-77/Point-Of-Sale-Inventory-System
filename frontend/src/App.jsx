@@ -31,6 +31,7 @@ import ProfilePage from './pages/profile/ProfilePage'
 import SettingsPage from './pages/settings/SettingsPage'
 import PayrollPage from './pages/payroll/PayrollPage'
 import ExpensesPage from './pages/expenses/ExpensesPage'
+import BillingPage from './pages/billing/BillingPage'
 import NotFoundPage from './pages/errors/NotFoundPage'
 import PlatformLoginPage from './pages/platform/PlatformLoginPage'
 import PlatformDashboardPage from './pages/platform/PlatformDashboardPage'
@@ -268,6 +269,14 @@ export default function App() {
             everyone can reach the page and log/see their own spend. The
             admin-only tabs (Budget & Limits, All Staff History) inside
             ExpensesPage itself are further gated on EXPENSES_MANAGE. */}
+        <Route
+          path="/billing"
+          element={
+            <ProtectedRoute requiredPermission="BILLING_MANAGE">
+              <BillingPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/expenses"
           element={

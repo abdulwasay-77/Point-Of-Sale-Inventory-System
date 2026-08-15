@@ -36,4 +36,6 @@ module.exports = {
   avatar: createUploader('avatars'),
   // Settings module (logo_url on BusinessSettings) — see settings.service.js.
   logo: createUploader('business'),
+  // Billing keeps each payment proof in its own permanent audit record.
+  paymentProof: createUploader('payment-proofs'),
 };

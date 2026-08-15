@@ -110,6 +110,23 @@ enum BusinessStatus {
   SUSPENDED
 }
 
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  SUSPENDED
+}
+
+enum PaymentSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // One row per client. Created only by a PlatformAdmin (see
 // business.service.js#createBusiness), which also creates that
 // business's first user (is_primary_admin=true, see User model) in the
@@ -179,6 +196,8 @@ model Business {
   staffExpenseRows  StaffExpense[]
   businessSettingsRows  BusinessSettings[]
   expenseBudgetRows  ExpenseBudget[]
+  subscriptionRow  Subscription?
+  paymentSubmissionRows  PaymentSubmission[]
 
   @@map("businesses")
 }
@@ -197,6 +216,7 @@ model PlatformAdmin {
   updated_at    DateTime @updatedAt
 
   audit_logs    PlatformAuditLog[]
+  reviewedPaymentSubmissionRows PaymentSubmission[]
 
   @@map("platform_admins")
 }
@@ -216,6 +236,93 @@ model PlatformAuditLog {
   platform_admin    PlatformAdmin @relation(fields: [platform_admin_id], references: [id])
 
   @@map("platform_audit_logs")
+}
+
+// Platform-wide billing catalog. Plan module and seat defaults are copied
+// onto a Business only when a payment is approved, preserving the existing
+// per-business override model between billing events.
+model Plan {
+  id                      String       @id @default(uuid())
+  name                    String       @unique
+  price                   Decimal
+  billing_cycle           BillingCycle @map("billing_cycle")
+  trial_period_days       Int          @map("trial_period_days") @default(0)
+  default_enabled_modules String[]     @map("default_enabled_modules")
+  default_max_admin_seats Int?         @map("default_max_admin_seats")
+  is_active               Boolean      @default(true)
+  created_at              DateTime     @default(now())
+  updated_at              DateTime     @updatedAt
+
+  subscriptionRows       Subscription[]
+  paymentSubmissionRows  PaymentSubmission[]
+
+  @@map("plans")
+}
+
+// One current subscription per Business is intentional for the agreed
+// billing design. Subscription history can be introduced separately later
+// without changing the business-facing access-control contract.
+model Subscription {
+  id                   String             @id @default(uuid())
+  business_id          String             @unique @map("business_id")
+  plan_id              String             @map("plan_id")
+  status               SubscriptionStatus @default(TRIALING)
+  current_period_start DateTime           @map("current_period_start")
+  current_period_end   DateTime           @map("current_period_end")
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
+
+  business             Business           @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  plan                 Plan               @relation(fields: [plan_id], references: [id], onDelete: Restrict)
+
+  @@index([plan_id])
+  @@map("subscriptions")
+}
+
+model PayoutMethod {
+  id             String   @id @default(uuid())
+  label          String   @unique
+  type           String
+  account_title  String    @map("account_title")
+  account_number String    @map("account_number")
+  instructions   String?
+  is_active      Boolean   @default(true)
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  paymentSubmissionRows PaymentSubmission[]
+
+  @@map("payout_methods")
+}
+
+model PaymentSubmission {
+  id               String                  @id @default(uuid())
+  business_id      String                  @map("business_id")
+  plan_id          String                  @map("plan_id")
+  payout_method_id String                  @map("payout_method_id")
+  submitted_by     String                  @map("submitted_by")
+  amount           Decimal
+  reference_note   String?                 @map("reference_note")
+  screenshot_url   String                  @map("screenshot_url")
+  status           PaymentSubmissionStatus @default(PENDING)
+  rejection_reason String?                 @map("rejection_reason")
+  reviewed_by      String?                 @map("reviewed_by")
+  reviewed_at      DateTime?               @map("reviewed_at")
+  created_at       DateTime                @default(now())
+  updated_at       DateTime                @updatedAt
+
+  business         Business                @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  plan             Plan                    @relation(fields: [plan_id], references: [id], onDelete: Restrict)
+  payout_method    PayoutMethod            @relation(fields: [payout_method_id], references: [id], onDelete: Restrict)
+  submittedByUser  User                    @relation("SubmittedPaymentSubmissions", fields: [submitted_by], references: [id], onDelete: Restrict)
+  reviewedByAdmin  PlatformAdmin?          @relation(fields: [reviewed_by], references: [id], onDelete: SetNull)
+
+  @@index([business_id])
+  @@index([plan_id])
+  @@index([payout_method_id])
+  @@index([submitted_by])
+  @@index([reviewed_by])
+  @@map("payment_submissions")
 }
 
 // =====================================================
@@ -277,6 +384,7 @@ model User {
   audit_logs       AuditLog[]
   login_attempts   LoginAttempt[]
   permission_overrides UserPermission[]
+  submittedPaymentSubmissionRows PaymentSubmission[] @relation("SubmittedPaymentSubmissions")
 
   business_id String   @map("business_id")
   business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
@@ -1472,5 +1580,3 @@ model StaffExpense {
   @@index([expense_date])
   @@map("staff_expenses")
 }
-
-

@@ -2,12 +2,22 @@ const AuthService = require('../modules/auth/auth.service');
 const prisma = require('../config/db');
 const { ROUTE_MODULE_MAP } = require('../config/modules');
 
+// A suspended primary admin may only inspect their own session, log out,
+// read their profile, or complete payment. Keeping this path-level policy
+// here makes the post-auth suspension exception impossible to bypass from
+// a hidden frontend route.
+const SUSPENDED_PRIMARY_ADMIN_ALLOWED_ROUTES = {
+  auth: new Set(['/me', '/logout']),
+  profile: new Set(['/']),
+  billing: null,
+};
+
 // Tenant auth middleware — used on every ordinary /api/* route (never
 // on /api/platform/*, which uses platformAuthMiddleware.js instead).
 // Besides verifying the token, this is where the request's tenant
 // context gets established for the rest of the request (see
-// config/db.js) and where a suspended business gets blocked before it
-// can touch any of its own data.
+// config/db.js) and where suspension access policy is enforced after
+// the user's primary-admin status is known.
 const authMiddleware = async (req, res, next) => {
   try {
     // Get token from Authorization header
@@ -55,7 +65,14 @@ const authMiddleware = async (req, res, next) => {
     // mid-session is blocked on the very next request, not just at
     // next login.
     const business = await prisma.basePrisma.business.findUnique({ where: { id: user.business_id } });
-    if (!business || business.status === 'SUSPENDED') {
+    if (!business) {
+      return res.status(403).json({
+        success: false,
+        message: 'This business account is not active. Please contact support.'
+      });
+    }
+
+    if (business.status === 'SUSPENDED' && !user.is_primary_admin) {
       return res.status(403).json({
         success: false,
         message: 'This business account is not active. Please contact support.'
@@ -84,7 +101,7 @@ const authMiddleware = async (req, res, next) => {
     // in the map (auth, profile, dashboard, settings...) are core and
     // always allowed. See config/modules.js.
     const requiredModule = ROUTE_MODULE_MAP[req.baseUrl];
-    if (requiredModule && !business.enabled_modules.includes(requiredModule)) {
+    if (business.status !== 'SUSPENDED' && requiredModule && !business.enabled_modules.includes(requiredModule)) {
       return res.status(403).json({
         success: false,
         message: 'This feature isn\'t enabled for your business plan.'
@@ -94,6 +111,28 @@ const authMiddleware = async (req, res, next) => {
     // Attach user info to request
     req.user = decoded;
     req.business = business;
+    req.businessSuspended = business.status === 'SUSPENDED';
+
+    // A suspended primary admin is deliberately exempt from the normal
+    // module gate above because billing is the only remaining route they
+    // can reach. Enforce that narrow access after the request identity is
+    // attached, while a non-primary admin has already returned above.
+    if (req.businessSuspended) {
+      const isAllowedAuthRoute =
+        req.baseUrl === '/api/auth' && SUSPENDED_PRIMARY_ADMIN_ALLOWED_ROUTES.auth.has(req.path);
+      const isAllowedProfileRoute =
+        req.method === 'GET' &&
+        req.baseUrl === '/api/profile' &&
+        SUSPENDED_PRIMARY_ADMIN_ALLOWED_ROUTES.profile.has(req.path);
+      const isAllowedBillingRoute = req.baseUrl === '/api/billing';
+
+      if (!isAllowedAuthRoute && !isAllowedProfileRoute && !isAllowedBillingRoute) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your business account is suspended. Please complete payment on the Billing page to restore access.',
+        });
+      }
+    }
 
     // Everything downstream of this point (permission checks, the
     // actual route handler, and every Prisma query any of them make)
@@ -108,4 +147,5 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-module.exports = authMiddleware;                                                                                       
+module.exports = authMiddleware;
+module.exports.SUSPENDED_PRIMARY_ADMIN_ALLOWED_ROUTES = SUSPENDED_PRIMARY_ADMIN_ALLOWED_ROUTES;

@@ -1,0 +1,3 @@
+const asyncHandler = require('../../utils/asyncHandler'); const { success } = require('../../utils/apiResponse'); const service = require('./paymentSubmissions.service');
+const list = asyncHandler(async (req, res) => success(res, await service.list(req.query))); const approve = asyncHandler(async (req, res) => success(res, await service.approve(req.params.id, req.platformAdmin.id), 'Payment approved')); const reject = asyncHandler(async (req, res) => success(res, await service.reject(req.params.id, req.body.reason, req.platformAdmin.id), 'Payment rejected'));
+module.exports = { list, approve, reject };

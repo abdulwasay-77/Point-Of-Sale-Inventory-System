@@ -1,0 +1,2 @@
+const express = require('express'); const auth = require('../../middleware/platformAuthMiddleware'); const controller = require('./payoutMethods.controller'); const router = express.Router();
+router.use(auth); router.get('/', controller.list); router.post('/', controller.create); router.put('/:id', controller.update); router.patch('/:id/deactivate', controller.deactivate); module.exports = router;

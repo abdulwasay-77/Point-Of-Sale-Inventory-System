@@ -49,7 +49,7 @@ const TENANT_MODELS = new Set([
   'Supplier', 'SupplierLedgerEntry', 'PurchaseOrder', 'PurchaseOrderItem',
   'Employee', 'PayrollRecord', 'CommissionRecord',
   'ExpenseBudgetAdjustment', 'StaffExpenseLimit', 'StaffExpense',
-  'BusinessSettings', 'ExpenseBudget',
+  'BusinessSettings', 'ExpenseBudget', 'PaymentSubmission',
 ]);
 
 const READ_OR_MUTATE_BY_WHERE = new Set([

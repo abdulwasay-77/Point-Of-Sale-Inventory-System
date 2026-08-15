@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const prisma = require('../../config/db');
-const { DEFAULT_MODULES, MODULES } = require('../../config/modules');
+const { MODULES } = require('../../config/modules');
 
 // Platform-only service — every query here deliberately uses
 // prisma.basePrisma (the unscoped client) rather than the ambient
@@ -29,6 +29,20 @@ class BusinessService {
       contactPhone: business.contact_phone,
       enabledModules: business.enabled_modules,
       maxAdminSeats: business.max_admin_seats,
+      subscription: business.subscriptionRow
+        ? {
+            id: business.subscriptionRow.id,
+            status: business.subscriptionRow.status,
+            currentPeriodStart: business.subscriptionRow.current_period_start,
+            currentPeriodEnd: business.subscriptionRow.current_period_end,
+            plan: {
+              id: business.subscriptionRow.plan.id,
+              name: business.subscriptionRow.plan.name,
+              billingCycle: business.subscriptionRow.plan.billing_cycle,
+              price: business.subscriptionRow.plan.price,
+            },
+          }
+        : null,
       createdAt: business.created_at,
       stats: business._count
         ? {
@@ -42,7 +56,10 @@ class BusinessService {
   async getAll() {
     const businesses = await prisma.basePrisma.business.findMany({
       orderBy: { created_at: 'desc' },
-      include: { _count: { select: { userRows: true, productRows: true } } },
+      include: {
+        _count: { select: { userRows: true, productRows: true } },
+        subscriptionRow: { include: { plan: true } },
+      },
     });
     return businesses.map((b) => this.toDTO(b));
   }
@@ -50,7 +67,10 @@ class BusinessService {
   async getById(id) {
     const business = await prisma.basePrisma.business.findUnique({
       where: { id },
-      include: { _count: { select: { userRows: true, productRows: true } } },
+      include: {
+        _count: { select: { userRows: true, productRows: true } },
+        subscriptionRow: { include: { plan: true } },
+      },
     });
     if (!business) {
       const err = new Error('Business not found');
@@ -64,7 +84,7 @@ class BusinessService {
   // transaction — a business is never left without someone able to log
   // in and manage it. Mirrors exactly what seed.js does for local dev,
   // just triggered by a platform admin instead of a script.
-  async createBusiness({ name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules }) {
+  async createBusiness({ name, industryType, contactEmail, contactPhone, adminName, adminEmail, adminPassword, enabledModules, planId }) {
     const existingEmail = await prisma.basePrisma.user.findUnique({ where: { email: adminEmail } });
     if (existingEmail) {
       const err = new Error('A user with this email already exists');
@@ -84,6 +104,18 @@ class BusinessService {
     const password_hash = await bcrypt.hash(adminPassword, 10);
 
     const result = await prisma.basePrisma.$transaction(async (tx) => {
+      // Resolve the selected plan before creating the business so its
+      // defaults become the new business's initial feature/seat limits.
+      const plan = await tx.plan.findFirst({
+        where: planId ? { id: planId, is_active: true } : { is_active: true },
+        orderBy: { created_at: 'asc' },
+      });
+      if (!plan) {
+        const error = new Error(planId ? 'Selected plan is not active' : 'No active plan is available for new businesses');
+        error.status = 400;
+        throw error;
+      }
+
       const business = await tx.business.create({
         data: {
           name,
@@ -92,7 +124,23 @@ class BusinessService {
           industry_type: industryType || null,
           contact_email: contactEmail || null,
           contact_phone: contactPhone || null,
-          enabled_modules: enabledModules && enabledModules.length ? enabledModules : DEFAULT_MODULES,
+          enabled_modules: enabledModules && enabledModules.length ? enabledModules : plan.default_enabled_modules,
+          max_admin_seats: plan.default_max_admin_seats,
+        },
+      });
+
+      // Every business starts with an explicit billing record in this same
+      // transaction, so it cannot exist without the selected plan's trial.
+      const trialStartedAt = new Date();
+      const trialEndsAt = new Date(trialStartedAt);
+      trialEndsAt.setDate(trialEndsAt.getDate() + plan.trial_period_days);
+      await tx.subscription.create({
+        data: {
+          business_id: business.id,
+          plan_id: plan.id,
+          status: 'TRIALING',
+          current_period_start: trialStartedAt,
+          current_period_end: trialEndsAt,
         },
       });
 
@@ -143,7 +191,15 @@ class BusinessService {
       err.status = 400;
       throw err;
     }
-    const business = await prisma.basePrisma.business.update({ where: { id }, data: { status } });
+    const subscriptionStatus = { TRIAL: 'TRIALING', ACTIVE: 'ACTIVE', SUSPENDED: 'SUSPENDED' }[status];
+    const business = await prisma.basePrisma.$transaction(async (tx) => {
+      const updatedBusiness = await tx.business.update({ where: { id }, data: { status } });
+      await tx.subscription.updateMany({
+        where: { business_id: id },
+        data: { status: subscriptionStatus },
+      });
+      return updatedBusiness;
+    });
     return this.toDTO(business);
   }
 

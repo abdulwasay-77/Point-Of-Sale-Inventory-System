@@ -33,6 +33,7 @@ const GROUP_BY_LABEL = {
   Users: 'Administration',
   Profile: 'Administration',
   Settings: 'Administration',
+  Billing: 'Administration',
 }
 // Fixed display order for groups — independent of NAV_ITEMS' own order,
 // so the sidebar's section order never depends on how that array is
@@ -133,6 +134,7 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
     Reports: 'REPORTS_VIEW',
     Users: 'USERS_MANAGE',
     Settings: 'SETTINGS_MANAGE',
+    Billing: 'BILLING_MANAGE',
     // Profile is deliberately left out of this map — every logged-in
     // user can always see their own profile page, regardless of role.
   }
