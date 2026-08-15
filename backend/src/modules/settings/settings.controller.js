@@ -11,8 +11,13 @@ class SettingsController {
   // Unauthenticated endpoint (see settings.routes.js) — deliberately
   // returns only companyName/logoUrl, never the full settings DTO, since
   // this is reachable by anyone who hasn't logged in yet.
+  //
+  // req.tenantBusiness comes from tenantMiddleware.js, resolved from
+  // the subdomain the request came in on (e.g. alimobiles.pos.com) —
+  // this is how the login page for each client shows that client's own
+  // name/logo before anyone has signed in.
   getPublicSettings = asyncHandler(async (req, res) => {
-    const settings = await SettingsService.getPublicSettings();
+    const settings = await SettingsService.getPublicSettings(req.tenantBusiness);
     success(res, settings);
   });
 

@@ -1,9 +1,9 @@
-
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const dotenv = require('dotenv');
 const errorHandler = require('./middleware/errorHandler');
+const tenantMiddleware = require('./middleware/tenantMiddleware');
 
 // Load environment variables
 dotenv.config();
@@ -45,6 +45,15 @@ app.use(express.urlencoded({ extended: true }));
 
 // Serve uploaded product images statically, e.g. /uploads/products/xyz.jpg
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// Resolves req.tenantBusiness from the request's subdomain (see
+// middleware/tenantMiddleware.js) — runs globally, before every route
+// below, including unauthenticated ones (/api/settings/public,
+// /api/auth/login) which need to know the tenant before any user/token
+// is involved. No-ops (req.tenantBusiness = null) when APP_DOMAIN isn't
+// set or the request has no recognizable subdomain, so this is safe to
+// run even in single-tenant/local setups.
+app.use(tenantMiddleware);
 
 // Health check route
 app.get('/api/health', (req, res) => {
@@ -102,5 +111,3 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 module.exports = app;
-
-

@@ -1,5 +1,3 @@
-
-
 const AuthService = require('./auth.service');
 const UsersService = require('../users/users.service');
 const { PrismaClient } = require('@prisma/client');
@@ -20,10 +18,20 @@ class AuthController {
       }
 
       try {
-        const result = await AuthService.login(email, password, {
-          ip_address: req.ip || req.connection.remoteAddress,
-          user_agent: req.headers['user-agent'],
-        });
+        // req.tenantBusiness comes from tenantMiddleware.js (resolved
+        // from the subdomain, e.g. alimobiles.pos.com) and is null
+        // when the request has no recognizable subdomain — in that
+        // case login behaves exactly as it did before subdomains
+        // existed (no business enforcement beyond email/password).
+        const result = await AuthService.login(
+          email,
+          password,
+          {
+            ip_address: req.ip || req.connection.remoteAddress,
+            user_agent: req.headers['user-agent'],
+          },
+          req.tenantBusiness ? req.tenantBusiness.id : null
+        );
 
         return res.json({
           success: true,
@@ -118,5 +126,3 @@ class AuthController {
 }
 
 module.exports = new AuthController();
-
-

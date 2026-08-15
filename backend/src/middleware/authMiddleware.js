@@ -1,5 +1,3 @@
-
-
 const AuthService = require('../modules/auth/auth.service');
 const prisma = require('../config/db');
 const { ROUTE_MODULE_MAP } = require('../config/modules');
@@ -61,6 +59,22 @@ const authMiddleware = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message: 'This business account is not active. Please contact support.'
+      });
+    }
+
+    // req.tenantBusiness is set by tenantMiddleware.js from the
+    // request's subdomain, and is null when the request has no
+    // recognizable subdomain (e.g. bare APP_DOMAIN, or local dev with
+    // no APP_DOMAIN configured) — in that case there's nothing to
+    // enforce, same as before subdomains existed at all. When a
+    // subdomain WAS resolved, a token minted for a different business
+    // must not be usable there — this is what stops a leaked/copied
+    // token (or a browser tab left open) from reaching another
+    // client's subdomain even though the JWT itself is still valid.
+    if (req.tenantBusiness && req.tenantBusiness.id !== user.business_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account does not belong to this business.'
       });
     }
 

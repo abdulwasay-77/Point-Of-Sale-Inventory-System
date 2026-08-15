@@ -1,10 +1,40 @@
-
 import axios from 'axios'
 import { emitApiError } from '../utils/errorBus'
 
-// Base URL for the backend API. Set VITE_API_BASE_URL in a .env file when
-// the backend is available. Defaults to a local Express server on port 5000.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
+// Base URL for the backend API.
+//
+// Subdomain-based multi-tenancy (see backend/src/middleware/
+// tenantMiddleware.js) identifies a business from the HOST HEADER of
+// the request that actually reaches the backend — not from anything
+// in the request body or a token. That means it's critical that a
+// browser sitting on alimobiles.pos.com sends its API calls to
+// alimobiles.pos.com too (or whatever port/host the backend for that
+// subdomain answers on) — hardcoding a single fixed API domain here
+// would silently break tenant resolution, because every business's
+// frontend would end up hitting the same Host header no matter which
+// subdomain the user actually visited.
+//
+// Two ways to configure this:
+//  1. VITE_API_BASE_URL — a full explicit override. Use this if the
+//     API genuinely lives on a separate domain from the frontend (in
+//     which case that separate domain needs its own way to learn the
+//     tenant, e.g. also being wildcard-routed).
+//  2. Otherwise, infer it from whatever hostname the browser is
+//     currently on, so it automatically matches the subdomain — this
+//     is the default and the one that "just works" with the
+//     reverse-proxy setup described alongside tenantMiddleware.js.
+//     VITE_API_PORT controls the inferred URL's port: unset defaults
+//     to 5000 (matches local `npm run dev`, same as the old hardcoded
+//     default below); set VITE_API_PORT="" in production if the API is
+//     reverse-proxied on the same origin/port as the frontend (no
+//     separate port at all).
+const configuredPort = import.meta.env.VITE_API_PORT
+const inferredPort = configuredPort === undefined ? '5000' : configuredPort
+const inferredBaseURL = `${window.location.protocol}//${window.location.hostname}${
+  inferredPort ? `:${inferredPort}` : ''
+}/api`
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || inferredBaseURL
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

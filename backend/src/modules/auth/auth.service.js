@@ -19,8 +19,15 @@ class AuthService {
     );
   }
 
-  // Login user
-  async login(email, password, meta = {}) {
+  // Login user. `expectedBusinessId`, when provided, is the business
+  // resolved from the request's subdomain by tenantMiddleware.js — see
+  // auth.controller.js. Enforcing it here (not just in authMiddleware,
+  // which only ever sees requests that already carry a valid token)
+  // is what makes subdomain login "enforced" rather than "cosmetic":
+  // a real abc.com admin's email/password pair simply doesn't work on
+  // xyz.pos.com, even on this very first request, before any token
+  // exists.
+  async login(email, password, meta = {}, expectedBusinessId = null) {
     // Find user by email
     const user = await prisma.user.findUnique({
       where: { email }
@@ -41,6 +48,16 @@ class AuthService {
     const business = await prisma.basePrisma.business.findUnique({ where: { id: user.business_id } });
     if (!business || business.status === 'SUSPENDED') {
       throw new Error('This business account is not active. Please contact support.');
+    }
+
+    // Checked before the password so a wrong-business attempt never
+    // depends on (or leaks anything about) whether the password was
+    // right — same "fail fast, don't tell them why" posture as the
+    // email-not-found case above. The business name/slug itself isn't
+    // secret (it's right there in the URL), only which humans belong
+    // to it is.
+    if (expectedBusinessId && business.id !== expectedBusinessId) {
+      throw new Error('No account found for this business. Check the web address and try again.');
     }
 
     // Verify password

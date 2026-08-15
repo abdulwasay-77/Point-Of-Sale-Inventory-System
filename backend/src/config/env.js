@@ -1,5 +1,3 @@
-
-
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -21,6 +19,13 @@ module.exports = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
   nodeEnv: process.env.NODE_ENV || 'development',
+  // Root domain subdomain-based tenant resolution is measured against
+  // (see middleware/tenantMiddleware.js). "alimobiles.pos.com" is only
+  // recognized as the "alimobiles" tenant when APP_DOMAIN="pos.com".
+  // Left undefined (rather than defaulted to a guessed value) when
+  // unset, so tenantMiddleware can cleanly no-op instead of matching
+  // against the wrong domain — e.g. local dev with no subdomains in
+  // use at all can simply leave this unset. Never hardcode a domain
+  // anywhere else in the codebase; this is the one place it's read.
+  appDomain: process.env.APP_DOMAIN || null,
 };
-
-
