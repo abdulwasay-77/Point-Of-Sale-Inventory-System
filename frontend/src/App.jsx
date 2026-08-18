@@ -5,6 +5,7 @@ import AuthLayout from './layouts/AuthLayout'
 import ProtectedRoute from './routes/ProtectedRoute'
 
 import LoginPage from './pages/auth/LoginPage'
+import StartLandingPage from './pages/landing/StartLandingPage'
 import TenantHandoffPage from './pages/auth/TenantHandoffPage'
 import DashboardPage from './pages/dashboard/DashboardPage'
 import CategoriesPage from './pages/categories/CategoriesPage'
@@ -52,6 +53,7 @@ export default function App() {
     <>
       <Routes>
       {/* Public routes */}
+      <Route path="/start" element={<StartLandingPage />} />
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<LoginPage />} />
       </Route>
