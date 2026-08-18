@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { platformBusinessService } from '../../services/platformBusinessService'
 import { platformBillingService } from '../../services/platformBillingService'
 import { toAssetUrl } from '../../utils/assetUrl'
+import { isStandalonePwa } from '../../utils/pwa'
 import Modal from '../../components/common/Modal'
 import Badge from '../../components/common/Badge'
 import Icon from '../../components/common/Icon'
@@ -643,6 +644,27 @@ function PayoutMethodModal({ method, onClose, onSaved }) {
 }
 
 function PaymentSubmissionsSection({ submissions, businesses, onChanged }) {
-  const [status, setStatus] = useState('ALL'); const [businessId, setBusinessId] = useState(''); const [reason, setReason] = useState({}); const filtered = submissions.filter((item) => (status === 'ALL' || item.status === status) && (!businessId || item.business?.id === businessId)); const reject = async (id) => { if (!reason[id]?.trim()) return; await platformBillingService.rejectSubmission(id, reason[id]); await onChanged() }
-  return <section className="card card-premium p-5"><div className="flex flex-wrap justify-between gap-3 mb-4"><div><h2 className="font-display text-lg font-semibold">Payment Review</h2><p className="text-sm text-ink-muted">Approve valid proof to reactivate or extend a subscription.</p></div><div className="flex gap-2"><select className="input-field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="ALL">All statuses</option><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select><select className="input-field" value={businessId} onChange={(e) => setBusinessId(e.target.value)}><option value="">All businesses</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></div></div>{filtered.map((item) => <div key={item.id} className="border-t border-line dark:border-dark-border py-4"><div className="flex flex-wrap justify-between gap-2"><div><p className="font-medium">{item.business?.name} · {item.plan?.name}</p><p className="text-sm text-ink-muted">{item.amount} via {item.payoutMethod?.label} · {new Date(item.createdAt).toLocaleString()}</p>{item.referenceNote && <p className="text-sm">{item.referenceNote}</p>}<a href={toAssetUrl(item.screenshotUrl)} target="_blank" rel="noreferrer" className="text-sm text-amber-dark underline">View screenshot</a></div><Badge tone={item.status === 'APPROVED' ? 'teal' : item.status === 'REJECTED' ? 'rose' : 'amber'}>{item.status}</Badge></div>{item.status === 'PENDING' && <div className="flex flex-wrap gap-2 mt-3"><button className="btn-accent text-sm" onClick={() => platformBillingService.approveSubmission(item.id).then(onChanged)}>Approve</button><input className="input-field max-w-xs" placeholder="Required rejection reason" value={reason[item.id] || ''} onChange={(e) => setReason({ ...reason, [item.id]: e.target.value })} /><button className="btn-ghost text-sm text-rose" onClick={() => reject(item.id)}>Reject</button></div>}{item.rejectionReason && <p className="text-sm text-rose mt-2">Reason: {item.rejectionReason}</p>}</div>)}</section>
+  const [status, setStatus] = useState('ALL'); const [businessId, setBusinessId] = useState(''); const [reason, setReason] = useState({}); const [previewUrl, setPreviewUrl] = useState(null); const filtered = submissions.filter((item) => (status === 'ALL' || item.status === status) && (!businessId || item.business?.id === businessId)); const reject = async (id) => { if (!reason[id]?.trim()) return; await platformBillingService.rejectSubmission(id, reason[id]); await onChanged() }
+  const handleOpenScreenshot = (e, url) => {
+    if (isStandalonePwa()) {
+      e.preventDefault()
+      setPreviewUrl(url)
+    }
+  }
+  return <section className="card card-premium p-5"><div className="flex flex-wrap justify-between gap-3 mb-4"><div><h2 className="font-display text-lg font-semibold">Payment Review</h2><p className="text-sm text-ink-muted">Approve valid proof to reactivate or extend a subscription.</p></div><div className="flex gap-2"><select className="input-field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="ALL">All statuses</option><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select><select className="input-field" value={businessId} onChange={(e) => setBusinessId(e.target.value)}><option value="">All businesses</option>{businesses.map((business) => <option key={business.id} value={business.id}>{business.name}</option>)}</select></div></div>{filtered.map((item) => <div key={item.id} className="border-t border-line dark:border-dark-border py-4"><div className="flex flex-wrap justify-between gap-2"><div><p className="font-medium">{item.business?.name} · {item.plan?.name}</p><p className="text-sm text-ink-muted">{item.amount} via {item.payoutMethod?.label} · {new Date(item.createdAt).toLocaleString()}</p>{item.referenceNote && <p className="text-sm">{item.referenceNote}</p>}<a href={toAssetUrl(item.screenshotUrl)} onClick={(e) => handleOpenScreenshot(e, toAssetUrl(item.screenshotUrl))} target="_blank" rel="noreferrer" className="text-sm text-amber-dark underline cursor-pointer">View screenshot</a></div><Badge tone={item.status === 'APPROVED' ? 'teal' : item.status === 'REJECTED' ? 'rose' : 'amber'}>{item.status}</Badge></div>{item.status === 'PENDING' && <div className="flex flex-wrap gap-2 mt-3"><button className="btn-accent text-sm" onClick={() => platformBillingService.approveSubmission(item.id).then(onChanged)}>Approve</button><input className="input-field max-w-xs" placeholder="Required rejection reason" value={reason[item.id] || ''} onChange={(e) => setReason({ ...reason, [item.id]: e.target.value })} /><button className="btn-ghost text-sm text-rose" onClick={() => reject(item.id)}>Reject</button></div>}{item.rejectionReason && <p className="text-sm text-rose mt-2">Reason: {item.rejectionReason}</p>}</div>)}
+    {previewUrl && (
+      <Modal isOpen={!!previewUrl} onClose={() => setPreviewUrl(null)} title="Payment Screenshot" size="lg">
+        <div className="flex flex-col items-center justify-center">
+          <div className="max-h-[65vh] w-full overflow-hidden rounded-xl border border-line dark:border-dark-border bg-paper-dim/40 dark:bg-dark-card2 flex items-center justify-center p-3">
+            <img src={previewUrl} alt="Payment Screenshot" className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-sm" />
+          </div>
+          <div className="mt-4 flex justify-end w-full">
+            <button type="button" onClick={() => setPreviewUrl(null)} className="btn-primary">
+              Close
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )}
+  </section>
 }
