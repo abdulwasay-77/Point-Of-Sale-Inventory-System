@@ -5,6 +5,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBusinessSettings } from '../../hooks/useBusinessSettings'
 import { toAssetUrl } from '../../utils/assetUrl'
+import { isStandalonePwa } from '../../utils/pwa'
 
 // Which visual group each nav item is bucketed under. Purely presentational
 // (grouping/section labels only) — has no bearing on permissions/modules,
@@ -156,7 +157,7 @@ export default function Sidebar({ isOpen, onClose, collapsed = false, onToggleCo
 
   async function handleLogout() {
     await logout()
-    navigate('/login')
+    navigate(isStandalonePwa() ? '/start' : '/login')
   }
 
   return (

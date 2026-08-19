@@ -1,6 +1,7 @@
 import { createContext, useState, useEffect, useCallback, useRef } from 'react'
 import { authService } from '../services/authService'
 import { buildTenantOrigin, needsTenantRedirect } from '../utils/tenantUrl'
+import { isStandalonePwa } from '../utils/pwa'
 
 export const AuthContext = createContext(null)
 
@@ -28,6 +29,11 @@ const BACKGROUND_REFRESH_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 // its own login page, which is a reasonable fallback for "you saved a
 // bookmark to the wrong address."
 function maybeRedirectToTenantSubdomain(user, token) {
+  // In an installed PWA / standalone app, never redirect across subdomains
+  // because subdomains are out-of-scope for the installed PWA origin, which
+  // causes Chrome to display an out-of-scope header bar and disrupts standalone session state.
+  if (isStandalonePwa()) return
+
   if (!user?.businessSlug) return
 
   const path = window.location.pathname

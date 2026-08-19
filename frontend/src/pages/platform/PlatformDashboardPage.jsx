@@ -89,7 +89,7 @@ export default function PlatformDashboardPage() {
   function handleLogout() {
     localStorage.removeItem('platform_token')
     localStorage.removeItem('platform_admin')
-    navigate('/platform/login', { replace: true })
+    navigate(isStandalonePwa() ? '/start' : '/platform/login', { replace: true })
   }
 
   async function handleStatusChange(id, status) {

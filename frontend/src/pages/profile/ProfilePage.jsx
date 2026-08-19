@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PageHeader from '../../components/common/PageHeader'
@@ -10,6 +9,7 @@ import { useTheme } from '../../hooks/useTheme'
 import { useDisclosure } from '../../hooks/useDisclosure'
 import { profileService } from '../../services/profileService'
 import { toAssetUrl } from '../../utils/assetUrl'
+import { isStandalonePwa } from '../../utils/pwa'
 import { formatDate, formatCurrency } from '../../utils/formatters'
 
 /**
@@ -114,7 +114,7 @@ export default function ProfilePage() {
 
   async function handleLogout() {
     await logout()
-    navigate('/login')
+    navigate(isStandalonePwa() ? '/start' : '/login')
   }
 
   if (isLoading) return <Loading message="Loading your profile…" />

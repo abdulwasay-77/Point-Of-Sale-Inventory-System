@@ -148,6 +148,16 @@ export default function LoginPage() {
           >
             {isSubmitting ? 'Signing in…' : 'Sign in'}
           </button>
+
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={() => navigate('/start')}
+              className="text-xs text-ink-muted dark:text-dark-muted hover:text-amber dark:hover:text-amber transition-colors inline-flex items-center gap-1.5"
+            >
+              <span>← Back to Start</span>
+            </button>
+          </div>
         </form>
       </div>
 
