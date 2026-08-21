@@ -4,10 +4,10 @@ const env = require('../config/env');
 // Subdomains that are never treated as a business slug, even though
 // they technically sit in front of APP_DOMAIN. "www" is the classic
 // bare-domain alias; "api"/"platform"/"app" are reserved for
-// non-tenant surfaces (a marketing site, the Super Admin platform
-// console, etc.) that might one day live on their own subdomain
-// without needing a matching Business row.
-const RESERVED_SUBDOMAINS = new Set(['www', 'api', 'platform', 'app']);
+// non-tenant surfaces. env.platformSubdomain (PLATFORM_SUBDOMAIN in
+// .env, default "platformadmin") is added at runtime so renaming it
+// in .env automatically updates the blocklist without touching code.
+const RESERVED_SUBDOMAINS = new Set(['www', 'api', 'platform', 'app', env.platformSubdomain]);
 
 // Resolves which Business a request belongs to, purely from the
 // hostname it came in on — e.g. "alimobiles.pos.com" -> slug
@@ -39,20 +39,16 @@ const RESERVED_SUBDOMAINS = new Set(['www', 'api', 'platform', 'app']);
 // entry all fall back to this. That keeps single-tenant/local
 // development working exactly as it did before this middleware existed.
 //
+// req.isPlatformAdminSubdomain is true when the hostname is exactly
+// env.platformSubdomain + "." + APP_DOMAIN (e.g.
+// "platformadmin.localhost"). Only this origin is allowed to call
+// platform admin API routes (enforced in platformAuthMiddleware.js).
+//
 // req.isPlatformOwnerSubdomain is a separate flag, true only when the
 // hostname exactly matches env.platformOwnerSubdomain + APP_DOMAIN
 // (e.g. "abdulwasay.owner.pos.com"). This is NOT a business — it's a
 // single, fixed, chosen address for the platform owner (see
-// config/env.js), so there's no database lookup, no wildcard DNS
-// requirement, and no interaction with TENANT_MODELS/runWithTenant.
-// It's checked FIRST, before the single-segment business-slug logic
-// below, specifically because "abdulwasay.owner" contains a dot and
-// would otherwise be quietly treated as "not a valid slug" and
-// no-opped by that logic. Nothing currently in the app enforces
-// requests based on this flag (see docs/subdomain-owner-redirect.md
-// for why — the "cosmetic" decision) — it's exposed on the request
-// mainly so a route/frontend could act on it later without needing to
-// re-parse the hostname itself.
+// config/env.js), so there's no database lookup involved.
 async function tenantMiddleware(req, res, next) {
   try {
     const hostname = req.hostname; // Express strips the port already
@@ -60,11 +56,13 @@ async function tenantMiddleware(req, res, next) {
     req.tenantBusiness = null;
     req.tenantSlug = null;
     req.isPlatformOwnerSubdomain = false;
+    req.isPlatformAdminSubdomain = false;
 
     if (!hostname || !env.appDomain) {
       return next();
     }
 
+    // --- Platform owner subdomain (dotted, e.g. "abdulwasay.owner.pos.com") ---
     if (
       env.platformOwnerSubdomain &&
       hostname === `${env.platformOwnerSubdomain}.${env.appDomain}`
@@ -85,9 +83,18 @@ async function tenantMiddleware(req, res, next) {
 
     // A dotted remainder (e.g. "foo.bar.pos.com") isn't a single valid
     // business slug — treat it as "no tenant" rather than guessing.
-    // (The owner subdomain, also dotted, was already handled above —
-    // this only catches everything else shaped like it.)
-    if (!slug || slug.includes('.') || RESERVED_SUBDOMAINS.has(slug)) {
+    if (!slug || slug.includes('.')) {
+      return next();
+    }
+
+    // --- Dedicated Platform Admin subdomain (e.g. "platformadmin.localhost") ---
+    if (slug === env.platformSubdomain) {
+      req.isPlatformAdminSubdomain = true;
+      return next();
+    }
+
+    // Any other reserved slug (www, api, app…) -> no tenant, no error
+    if (RESERVED_SUBDOMAINS.has(slug)) {
       return next();
     }
 

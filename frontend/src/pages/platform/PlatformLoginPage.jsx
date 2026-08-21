@@ -3,6 +3,8 @@ import { useNavigate, Navigate } from 'react-router-dom'
 import { platformAuthService } from '../../services/platformAuthService'
 import Icon from '../../components/common/Icon'
 import { useTheme } from '../../hooks/useTheme'
+import { isStandalonePwa } from '../../utils/pwa'
+import { isTenantSubdomain, buildPlatformUrl } from '../../utils/tenantUrl'
 
 /**
  * Super Admin login — deliberately not built on the tenant LoginPage or
@@ -25,14 +27,22 @@ export default function PlatformLoginPage() {
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const isTenant = isTenantSubdomain()
+
   const existingToken = localStorage.getItem('platform_token')
-  if (existingToken) {
+  if (existingToken && !isTenant) {
     return <Navigate to="/platform/dashboard" replace />
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+
+    if (isTenant) {
+      setError('Platform Admin login is not permitted on a business subdomain. Please use the platform URL.')
+      return
+    }
+
     if (!email.trim() || !password.trim()) {
       setError('Enter both an email and a password to continue.')
       return
@@ -72,6 +82,21 @@ export default function PlatformLoginPage() {
             <p className="text-sm text-ink-muted dark:text-dark-muted mt-1">Manage businesses on this platform</p>
           </div>
 
+          {isTenant && (
+            <div className="mb-4 p-3.5 rounded-xl bg-amber/15 border border-amber/30 text-ink dark:text-dark-text text-sm">
+              <p className="font-medium text-amber-dark dark:text-amber mb-1">Business Subdomain Detected</p>
+              <p className="text-xs text-ink-muted dark:text-dark-muted mb-2">
+                Platform administration cannot be accessed from a business subdomain for security.
+              </p>
+              <a
+                href={buildPlatformUrl('/platform/login')}
+                className="btn-accent text-xs py-1.5 px-3 inline-flex items-center gap-1.5"
+              >
+                Go to Dedicated Platform Portal →
+              </a>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
               <label htmlFor="email" className="label-text">Email</label>
@@ -83,6 +108,7 @@ export default function PlatformLoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@platform.com"
                 className="input-field"
+                disabled={isTenant}
               />
             </div>
             <div>
@@ -95,6 +121,7 @@ export default function PlatformLoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="input-field"
+                disabled={isTenant}
               />
             </div>
 
@@ -104,19 +131,21 @@ export default function PlatformLoginPage() {
               </p>
             )}
 
-            <button type="submit" disabled={isSubmitting} className="btn-accent w-full mt-2">
+            <button type="submit" disabled={isSubmitting || isTenant} className="btn-accent w-full mt-2">
               {isSubmitting ? 'Signing in…' : 'Sign in'}
             </button>
 
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => navigate('/start')}
-                className="text-xs text-ink-muted dark:text-dark-muted hover:text-amber dark:hover:text-amber transition-colors inline-flex items-center gap-1.5"
-              >
-                <span>← Back to Start</span>
-              </button>
-            </div>
+            {isStandalonePwa() && (
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => navigate('/start')}
+                  className="text-xs text-ink-muted dark:text-dark-muted hover:text-amber dark:hover:text-amber transition-colors inline-flex items-center gap-1.5"
+                >
+                  <span>← Back to Start</span>
+                </button>
+              </div>
+            )}
           </form>
         </div>
       </div>

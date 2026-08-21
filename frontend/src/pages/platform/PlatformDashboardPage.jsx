@@ -4,6 +4,7 @@ import { platformBusinessService } from '../../services/platformBusinessService'
 import { platformBillingService } from '../../services/platformBillingService'
 import { toAssetUrl } from '../../utils/assetUrl'
 import { isStandalonePwa } from '../../utils/pwa'
+import { getTenantLoginUrl } from '../../utils/tenantUrl'
 import Modal from '../../components/common/Modal'
 import Badge from '../../components/common/Badge'
 import Icon from '../../components/common/Icon'
@@ -180,7 +181,7 @@ export default function PlatformDashboardPage() {
           ].map(([key, label]) => <button key={key} type="button" className={activeSection === key ? 'btn-accent' : 'btn-ghost'} onClick={() => setActiveSection(key)}>{label}</button>)}
         </div>
 
-        {activeSection === 'businesses' && <div className="card card-premium glow-amber">
+        {activeSection === 'businesses' && <div className="card card-premium">
           <div className="p-4 border-b border-line dark:border-dark-border flex flex-col sm:flex-row gap-3">
             <SearchInput
               value={query}
@@ -276,6 +277,16 @@ export default function PlatformDashboardPage() {
 
 /** One row in the business table, plus its expandable manage panel. */
 function BusinessRow({ business: b, isExpanded, onToggle, onStatusChange, onChanged }) {
+  const [copied, setCopied] = useState(false)
+  const url = getTenantLoginUrl(b.slug)
+
+  function copyUrl(e) {
+    e.stopPropagation()
+    navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
     <>
       <tr className="group">
@@ -288,7 +299,18 @@ function BusinessRow({ business: b, isExpanded, onToggle, onStatusChange, onChan
               <span className="font-medium block transition-colors duration-200 group-hover:text-amber-dark dark:group-hover:text-amber">
                 {b.name}
               </span>
-              <span className="text-xs text-ink-muted dark:text-dark-muted figure">{b.slug}</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-xs text-ink-muted dark:text-dark-muted font-mono">{b.slug}</span>
+                <button
+                  type="button"
+                  onClick={copyUrl}
+                  title="Copy Business Login Link"
+                  className="px-1.5 py-0.5 rounded text-[11px] font-medium bg-paper-dim dark:bg-dark-card2 text-ink-muted dark:text-dark-muted hover:text-amber-dark dark:hover:text-amber border border-line dark:border-dark-border inline-flex items-center gap-1 transition-colors"
+                >
+                  <Icon name={copied ? 'checkCircle' : 'send'} className="h-2.5 w-2.5" />
+                  <span>{copied ? 'Copied' : 'Copy URL'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </td>
@@ -326,6 +348,9 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
   const [newPassword, setNewPassword] = useState('')
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState('teal')
+  const [copiedUrl, setCopiedUrl] = useState(false)
+
+  const tenantUrl = getTenantLoginUrl(business.slug)
 
   const [infoForm, setInfoForm] = useState({
     name: business.name,
@@ -337,6 +362,13 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
   function say(text, tone = 'teal') {
     setMessage(text)
     setMessageTone(tone)
+  }
+
+  function handleCopyPortalUrl() {
+    navigator.clipboard.writeText(tenantUrl)
+    setCopiedUrl(true)
+    say('Business portal URL copied to clipboard!')
+    setTimeout(() => setCopiedUrl(false), 2500)
   }
 
   function toggleModule(key) {
@@ -387,9 +419,42 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
         </p>
       )}
 
-      {/* Business info — the fields captured when this business was first
-          created (see CreateBusinessModal). Slug is deliberately not
-          editable here (kept immutable). */}
+      {/* Business Portal URL Section */}
+      <section className="rounded-xl border border-amber/30 bg-amber/5 dark:bg-amber/10 p-4 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="section-icon bg-amber-light dark:bg-amber/20 text-amber-dark dark:text-amber">
+              <Icon name="pos" className="h-3.5 w-3.5" />
+            </span>
+            <label className="label-text mb-0 font-medium text-ink dark:text-dark-text">Business Login &amp; Portal URL</label>
+          </div>
+          <span className="text-xs text-ink-muted dark:text-dark-muted">Share this direct link with this business's staff and managers</span>
+        </div>
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 pt-1">
+          <input
+            readOnly
+            value={tenantUrl}
+            className="input-field font-mono text-xs bg-white dark:bg-dark-card select-all flex-1 min-w-[200px]"
+          />
+          <button
+            type="button"
+            onClick={handleCopyPortalUrl}
+            className="btn-accent text-xs py-2 px-3 flex items-center gap-1.5 shrink-0"
+          >
+            <Icon name={copiedUrl ? 'checkCircle' : 'send'} className="h-3.5 w-3.5" />
+            <span>{copiedUrl ? 'Copied!' : 'Copy Link'}</span>
+          </button>
+          <a
+            href={tenantUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-outline text-xs py-2 px-3 flex items-center gap-1.5 shrink-0"
+          >
+            <span>Open Portal ↗</span>
+          </a>
+        </div>
+      </section>
+
       <section>
         <div className="flex items-center gap-2 mb-2">
           <span className="section-icon bg-amber-light dark:bg-amber/15 text-amber-dark dark:text-amber">
@@ -535,6 +600,8 @@ function CreateBusinessModal({ plans, onClose, onCreated }) {
   })
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [createdResult, setCreatedResult] = useState(null)
+  const [copied, setCopied] = useState(false)
 
   function update(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -549,13 +616,92 @@ function CreateBusinessModal({ plans, onClose, onCreated }) {
     }
     setIsSubmitting(true)
     try {
-      await platformBusinessService.create(form)
-      onCreated()
+      const { data } = await platformBusinessService.create(form)
+      setCreatedResult(data.data)
     } catch (err) {
       // Handled by the global error popup (see errorBus.js) -- no local banner needed.
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  if (createdResult) {
+    const tenantUrl = getTenantLoginUrl(createdResult.business?.slug)
+
+    return (
+      <Modal isOpen onClose={onCreated} title="Business Created Successfully" size="md">
+        <div className="p-6 space-y-5 text-center">
+          <div className="h-12 w-12 rounded-full bg-teal-light dark:bg-teal/20 text-teal dark:text-teal mx-auto flex items-center justify-center">
+            <Icon name="checkCircle" className="h-7 w-7" />
+          </div>
+
+          <div>
+            <h3 className="font-display text-lg font-bold text-ink dark:text-dark-text">
+              {createdResult.business?.name} is Ready!
+            </h3>
+            <p className="text-sm text-ink-muted dark:text-dark-muted mt-1">
+              A dedicated portal and primary admin account have been generated.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-amber/30 bg-amber/5 dark:bg-amber/10 p-4 text-left space-y-3">
+            <div>
+              <label className="label-text text-xs text-ink-muted dark:text-dark-muted">
+                Direct Business Access / Login URL
+              </label>
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  readOnly
+                  value={tenantUrl}
+                  className="input-field font-mono text-xs bg-white dark:bg-dark-card select-all flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(tenantUrl)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2500)
+                  }}
+                  className="btn-accent text-xs py-2 px-3 flex items-center gap-1.5 shrink-0"
+                >
+                  <Icon name={copied ? 'checkCircle' : 'send'} className="h-3.5 w-3.5" />
+                  <span>{copied ? 'Copied!' : 'Copy Link'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-line/60 dark:border-dark-border/60 text-xs text-ink-muted dark:text-dark-muted space-y-1">
+              <p>
+                <strong className="text-ink dark:text-dark-text">Primary Admin:</strong>{' '}
+                {createdResult.admin?.name} ({createdResult.admin?.email})
+              </p>
+              <p>
+                <strong className="text-ink dark:text-dark-text">Subdomain Slug:</strong>{' '}
+                <span className="font-mono text-amber-dark dark:text-amber">{createdResult.business?.slug}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <a
+              href={tenantUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-outline text-sm py-2 px-4 inline-flex items-center gap-1.5"
+            >
+              <span>Open Business Portal ↗</span>
+            </a>
+            <button
+              type="button"
+              className="btn-accent text-sm py-2 px-5"
+              onClick={onCreated}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )
   }
 
   return (

@@ -39,6 +39,11 @@ module.exports = {
   // any UI. Left unset by default; see middleware/tenantMiddleware.js
   // for how it's recognized.
   platformOwnerSubdomain: process.env.PLATFORM_OWNER_SUBDOMAIN || null,
+  // The subdomain reserved exclusively for the Platform Admin portal,
+  // e.g. "platformadmin" → full address "platformadmin.<APP_DOMAIN>".
+  // Defaults to "platformadmin" if unset. tenantMiddleware adds this to
+  // its reserved-slug blocklist so it is never matched as a business.
+  platformSubdomain: process.env.PLATFORM_SUBDOMAIN || 'platformadmin',
 };
 
 

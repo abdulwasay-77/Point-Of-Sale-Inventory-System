@@ -3,6 +3,8 @@ import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useBusinessSettings } from '../../hooks/useBusinessSettings'
 import { toAssetUrl } from '../../utils/assetUrl'
+import { isStandalonePwa } from '../../utils/pwa'
+import { isTenantSubdomain, buildBareDomainUrl } from '../../utils/tenantUrl'
 import Icon from '../../components/common/Icon'
 
 /**
@@ -149,15 +151,31 @@ export default function LoginPage() {
             {isSubmitting ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <div className="pt-2 text-center">
-            <button
-              type="button"
-              onClick={() => navigate('/start')}
-              className="text-xs text-ink-muted dark:text-dark-muted hover:text-amber dark:hover:text-amber transition-colors inline-flex items-center gap-1.5"
-            >
-              <span>← Back to Start</span>
-            </button>
-          </div>
+          {isTenantSubdomain() && (
+            <div className="pt-3 text-center border-t border-line/60 dark:border-dark-border/60 mt-4">
+              <p className="text-xs text-ink-muted dark:text-dark-muted">
+                Not {companyName || 'this business'}?{' '}
+                <a
+                  href={buildBareDomainUrl('/login')}
+                  className="text-amber-dark dark:text-amber font-medium hover:underline inline-flex items-center gap-1"
+                >
+                  Switch Business / Main Portal
+                </a>
+              </p>
+            </div>
+          )}
+
+          {isStandalonePwa() && (
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={() => navigate('/start')}
+                className="text-xs text-ink-muted dark:text-dark-muted hover:text-amber dark:hover:text-amber transition-colors inline-flex items-center gap-1.5"
+              >
+                <span>← Back to Start</span>
+              </button>
+            </div>
+          )}
         </form>
       </div>
 
