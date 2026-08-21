@@ -16,7 +16,21 @@ import StatCard from '../../components/dashboard/StatCard'
 import { useTheme } from '../../hooks/useTheme'
 import ConfirmDialog from '../../components/common/ConfirmDialog'
 
-
+const ALL_MODULES = {
+  PRODUCTS: 'Products & Catalog',
+  UNITS: 'Units of Measure',
+  INVENTORY: 'Inventory & Warehouses',
+  CONTACTS: 'Customers & Suppliers',
+  SALES: 'Point of Sale & Invoices',
+  PURCHASES: 'Purchases & Receiving',
+  REPORTS: 'Reports & Dashboard',
+  PAYROLL: 'Payroll',
+  EXPENSES: 'Staff Expenses',
+  CREDIT: 'Customer Credit',
+  INSTALLMENTS: 'Installment Plans',
+  KITS: 'Kits & Bundles',
+  ADMIN: 'Users, Roles & Settings',
+}
 
 
 // Maps a business's status straight onto the shared Badge tones (same
