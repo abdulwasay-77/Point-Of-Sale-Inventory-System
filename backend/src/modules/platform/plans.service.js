@@ -24,7 +24,53 @@ class PlansService {
 
   async list() { return (await prisma.basePrisma.plan.findMany({ orderBy: { created_at: 'desc' } })).map((plan) => this.toDTO(plan)); }
   async create(data) { this.validate(data); return this.toDTO(await prisma.basePrisma.plan.create({ data: { name: data.name.trim(), price: Number(data.price), billing_cycle: data.billingCycle, trial_period_days: Number(data.trialPeriodDays || 0), default_enabled_modules: data.defaultEnabledModules, default_max_admin_seats: data.defaultMaxAdminSeats === null || data.defaultMaxAdminSeats === undefined ? null : Number(data.defaultMaxAdminSeats) } })); }
-  async update(id, data) { this.validate(data); return this.toDTO(await prisma.basePrisma.plan.update({ where: { id }, data: { name: data.name.trim(), price: Number(data.price), billing_cycle: data.billingCycle, trial_period_days: Number(data.trialPeriodDays || 0), default_enabled_modules: data.defaultEnabledModules, default_max_admin_seats: data.defaultMaxAdminSeats === null || data.defaultMaxAdminSeats === undefined ? null : Number(data.defaultMaxAdminSeats), ...(data.isActive === undefined ? {} : { is_active: Boolean(data.isActive) }) } })); }
+  async update(id, data) {
+    this.validate(data);
+
+    return prisma.basePrisma.$transaction(async (tx) => {
+      // 1. Update the plan itself
+      const updatedPlan = await tx.plan.update({
+        where: { id },
+        data: {
+          name: data.name.trim(),
+          price: Number(data.price),
+          billing_cycle: data.billingCycle,
+          trial_period_days: Number(data.trialPeriodDays || 0),
+          default_enabled_modules: data.defaultEnabledModules,
+          default_max_admin_seats:
+            data.defaultMaxAdminSeats === null || data.defaultMaxAdminSeats === undefined
+              ? null
+              : Number(data.defaultMaxAdminSeats),
+          ...(data.isActive === undefined ? {} : { is_active: Boolean(data.isActive) }),
+        },
+      });
+
+      // 2. Push the new module list and seat limit to every business that
+      //    is currently subscribed to this plan. This keeps the plan as the
+      //    single source of truth — editing a plan immediately updates all
+      //    tenants on it rather than only affecting newly created ones.
+      const subscriptions = await tx.subscription.findMany({
+        where: { plan_id: id },
+        select: { business_id: true },
+      });
+
+      if (subscriptions.length > 0) {
+        const businessIds = subscriptions.map((s) => s.business_id);
+        await tx.business.updateMany({
+          where: { id: { in: businessIds } },
+          data: {
+            enabled_modules: updatedPlan.default_enabled_modules,
+            max_admin_seats:
+              updatedPlan.default_max_admin_seats === null
+                ? null
+                : updatedPlan.default_max_admin_seats,
+          },
+        });
+      }
+
+      return this.toDTO(updatedPlan);
+    });
+  }
   async deactivate(id) { return this.toDTO(await prisma.basePrisma.plan.update({ where: { id }, data: { is_active: false } })); }
 }
 module.exports = new PlansService();

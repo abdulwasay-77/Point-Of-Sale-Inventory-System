@@ -16,21 +16,8 @@ import StatCard from '../../components/dashboard/StatCard'
 import { useTheme } from '../../hooks/useTheme'
 import ConfirmDialog from '../../components/common/ConfirmDialog'
 
-const ALL_MODULES = {
-  PRODUCTS: 'Products & Catalog',
-  UNITS: 'Units of Measure',
-  INVENTORY: 'Inventory & Warehouses',
-  CONTACTS: 'Customers & Suppliers',
-  SALES: 'Point of Sale & Invoices',
-  PURCHASES: 'Purchases & Receiving',
-  REPORTS: 'Reports & Dashboard',
-  PAYROLL: 'Payroll',
-  EXPENSES: 'Staff Expenses',
-  CREDIT: 'Customer Credit',
-  INSTALLMENTS: 'Installment Plans',
-  KITS: 'Kits & Bundles',
-  ADMIN: 'Users, Roles & Settings',
-}
+
+
 
 // Maps a business's status straight onto the shared Badge tones (same
 // teal/amber/rose vocabulary as every other status badge in the app —
@@ -343,7 +330,6 @@ function BusinessRow({ business: b, isExpanded, onToggle, onStatusChange, onChan
 }
 
 function BusinessDetail({ business, onStatusChange, onChanged }) {
-  const [modules, setModules] = useState(business.enabledModules || [])
   const [maxSeats, setMaxSeats] = useState(business.maxAdminSeats ?? '')
   const [newPassword, setNewPassword] = useState('')
   const [message, setMessage] = useState('')
@@ -371,10 +357,6 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
     setTimeout(() => setCopiedUrl(false), 2500)
   }
 
-  function toggleModule(key) {
-    setModules((prev) => (prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]))
-  }
-
   async function saveInfo() {
     if (!infoForm.name.trim()) {
       say('Business name cannot be empty.', 'rose')
@@ -387,12 +369,6 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
     } catch (err) {
       // Handled by the global error popup (see errorBus.js) -- no local banner needed.
     }
-  }
-
-  async function saveModules() {
-    await platformBusinessService.setModules(business.id, modules)
-    say('Modules updated.')
-    onChanged()
   }
 
   async function saveMaxSeats() {
@@ -546,18 +522,7 @@ function BusinessDetail({ business, onStatusChange, onChanged }) {
         )}
       </section>
 
-      <section>
-        <label className="label-text">Enabled modules</label>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
-          {Object.entries(ALL_MODULES).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-2 text-sm text-ink dark:text-dark-text">
-              <input type="checkbox" checked={modules.includes(key)} onChange={() => toggleModule(key)} />
-              {label}
-            </label>
-          ))}
-        </div>
-        <button className="btn-accent text-sm mt-2" onClick={saveModules}>Save modules</button>
-      </section>
+
 
       <div className="flex flex-wrap items-end gap-6">
         <div className="flex items-end gap-2">
